@@ -1,0 +1,1561 @@
+// ==UserScript==
+// @name         LSS - RD Autoalarm freigegebene Einsätze + Konfigurator
+// @namespace    https://www.leitstellenspiel.de/
+// @version      2.2
+// @description  Automatische RD-Alarmierung für eigene freigegebene Einsätze mit Fahrzeug-Konfigurator
+// @author       Christian
+// @match        https://www.leitstellenspiel.de/*
+// @grant        none
+// ==/UserScript==
+
+(function () {
+    'use strict';
+
+    /******************************************************************
+     * STANDARD-KONFIGURATION
+     ******************************************************************/
+
+    const DEFAULT_CONFIG = {
+        ELW_SEG: {
+            name: 'SEG-ELW',
+            vehicle: 'ELW 1 (SEG)',
+            enabled: true,
+            amount: 1
+        },
+
+        LNA: {
+            name: 'LNA',
+            vehicle: 'KdoW-LNA',
+            enabled: true,
+            amount: 1
+        },
+
+        ORGL: {
+            name: 'OrgL',
+            vehicle: 'KdoW-Orgl',
+            enabled: true,
+            amount: 1
+        },
+
+        NAW: {
+            name: 'NAW',
+            vehicle: 'NAW',
+            enabled: true,
+            amount: 1
+        },
+
+        NEF: {
+            name: 'NEF',
+            vehicle: 'NEF',
+            enabled: true,
+            amount: 10
+        },
+
+        RTW: {
+            name: 'RTW',
+            vehicle: 'RTW',
+            enabled: true,
+            amount: 10
+        },
+
+        RTH: {
+            name: 'RTH',
+            vehicle: 'RTH',
+            enabled: true,
+            amount: 1
+        }
+    };
+
+    const STORAGE_KEY = 'lss_rd_autoalarm_v22';
+
+    const QUEUE_KEY = 'lss_rd_autoalarm_queue_v22';
+
+
+    /******************************************************************
+     * HILFSFUNKTIONEN
+     ******************************************************************/
+
+    function sleep(ms) {
+        return new Promise(resolve => setTimeout(resolve, ms));
+    }
+
+
+    function loadConfig() {
+        try {
+            const raw = localStorage.getItem(STORAGE_KEY);
+
+            if (!raw) {
+                return JSON.parse(JSON.stringify(DEFAULT_CONFIG));
+            }
+
+            const saved = JSON.parse(raw);
+
+            const config = JSON.parse(JSON.stringify(DEFAULT_CONFIG));
+
+            Object.keys(config).forEach(key => {
+                if (saved[key]) {
+                    if (typeof saved[key].enabled === 'boolean') {
+                        config[key].enabled = saved[key].enabled;
+                    }
+
+                    if (
+                        typeof saved[key].amount === 'number' &&
+                        saved[key].amount >= 0
+                    ) {
+                        config[key].amount = saved[key].amount;
+                    }
+                }
+            });
+
+            return config;
+
+        } catch (e) {
+            console.log('[RD-Autoalarm] Fehler beim Laden der Konfiguration:', e);
+            return JSON.parse(JSON.stringify(DEFAULT_CONFIG));
+        }
+    }
+
+
+    function saveConfig(config) {
+        try {
+            localStorage.setItem(
+                STORAGE_KEY,
+                JSON.stringify(config)
+            );
+
+            console.log('[RD-Autoalarm] Konfiguration gespeichert.');
+
+        } catch (e) {
+            console.log('[RD-Autoalarm] Fehler beim Speichern:', e);
+        }
+    }
+
+
+    /******************************************************************
+     * PATIENTEN ERMITTELN
+     ******************************************************************/
+
+    function getPatientCount(missionId) {
+
+        const patientElements =
+            document.querySelectorAll('.mission_patient');
+
+        if (patientElements.length > 0) {
+            return patientElements.length;
+        }
+
+
+        const summary =
+            document.querySelector(
+                '#mission_patient_summary_' + missionId
+            );
+
+        if (summary) {
+
+            const strong =
+                summary.querySelector('strong');
+
+            if (strong) {
+
+                const match =
+                    strong.textContent.match(/\d+/);
+
+                if (match) {
+                    return parseInt(match[0], 10);
+                }
+            }
+
+            const match =
+                summary.textContent.match(/\d+/);
+
+            if (match) {
+                return parseInt(match[0], 10);
+            }
+        }
+
+
+        const patients =
+            document.querySelector(
+                '#mission_patients_' + missionId
+            );
+
+        if (patients) {
+            return patients.children.length;
+        }
+
+
+        const headerInfo =
+            document.querySelector(
+                '.mission_header_info .col-md-6:first-of-type>small'
+            );
+
+        if (headerInfo) {
+
+            const match =
+                headerInfo.textContent.match(/\|\s*(\d+)/);
+
+            if (match) {
+                return parseInt(match[1], 10);
+            }
+        }
+
+
+        return 0;
+    }
+
+
+    /******************************************************************
+     * EINSATZ-ID
+     ******************************************************************/
+
+    function getMissionId(entry) {
+
+        if (!entry) {
+            return null;
+        }
+
+
+        if (entry.id) {
+
+            const match =
+                entry.id.match(/^mission_(\d+)$/);
+
+            if (match) {
+                return match[1];
+            }
+        }
+
+
+        const link =
+            entry.querySelector(
+                'a[href*="/missions/"]'
+            );
+
+        if (link) {
+
+            const match =
+                link.href.match(/\/missions\/(\d+)/);
+
+            if (match) {
+                return match[1];
+            }
+        }
+
+
+        return null;
+    }
+
+
+    /******************************************************************
+     * FREIGEGEBENE EINSÄTZE
+     ******************************************************************/
+
+    function getSharedMissions() {
+
+        const result = [];
+
+
+        const entries =
+            Array.from(
+                document.querySelectorAll(
+                    '#mission_list > .missionSideBarEntry'
+                )
+            );
+
+
+        console.log(
+            '[RD-Autoalarm] Einsatz-Einträge:',
+            entries.length
+        );
+
+
+        entries.forEach(entry => {
+
+            const missionId =
+                getMissionId(entry);
+
+            if (!missionId) {
+                return;
+            }
+
+
+            const panel =
+                document.querySelector(
+                    '#mission_panel_' + missionId
+                );
+
+            if (!panel) {
+                return;
+            }
+
+
+            const isGreen =
+                panel.classList.contains(
+                    'mission_panel_green'
+                );
+
+            const isSuccess =
+                panel.classList.contains(
+                    'panel-success'
+                );
+
+
+            if (!isGreen && !isSuccess) {
+                return;
+            }
+
+
+            result.push({
+                id: missionId
+            });
+        });
+
+
+        if (result.length === 0) {
+
+            document
+                .querySelectorAll(
+                    '#mission_list .mission_panel_green'
+                )
+                .forEach(panel => {
+
+                    const match =
+                        panel.id.match(
+                            /mission_panel_(\d+)/
+                        );
+
+                    if (!match) {
+                        return;
+                    }
+
+
+                    const id = match[1];
+
+
+                    if (
+                        !result.some(
+                            x => x.id === id
+                        )
+                    ) {
+
+                        result.push({
+                            id: id
+                        });
+                    }
+                });
+        }
+
+
+        return result;
+    }
+
+
+    /******************************************************************
+     * FAHRZEUGTYP
+     ******************************************************************/
+
+    function getVehicleType(row) {
+
+        const attr =
+            row.getAttribute('vehicle_type');
+
+        if (attr) {
+            return attr.trim();
+        }
+
+
+        const checkbox =
+            row.querySelector(
+                '.vehicle_checkbox'
+            );
+
+        if (checkbox) {
+
+            const type =
+                checkbox.getAttribute(
+                    'vehicle_type'
+                );
+
+            if (type) {
+                return type.trim();
+            }
+        }
+
+
+        return row.textContent
+            .replace(/\s+/g, ' ')
+            .trim();
+    }
+
+
+    /******************************************************************
+     * FAHRZEUGE AUSWÄHLEN
+     ******************************************************************/
+
+    function selectVehicles(
+        rows,
+        vehicleType,
+        amount
+    ) {
+
+        let selected = 0;
+
+
+        for (const row of rows) {
+
+            if (selected >= amount) {
+                break;
+            }
+
+
+            const checkbox =
+                row.querySelector(
+                    '.vehicle_checkbox'
+                );
+
+            if (!checkbox) {
+                continue;
+            }
+
+
+            if (
+                checkbox.disabled ||
+                checkbox.checked
+            ) {
+                continue;
+            }
+
+
+            const type =
+                getVehicleType(row);
+
+
+            if (type === vehicleType) {
+
+                checkbox.click();
+
+                if (checkbox.checked) {
+                    selected++;
+                }
+            }
+        }
+
+
+        console.log(
+            '[RD-Autoalarm]',
+            vehicleType,
+            selected + '/' + amount
+        );
+
+
+        return selected;
+    }
+
+
+    /******************************************************************
+     * RD FAHRZEUGE NACH KONFIGURATION ALARMIEREN
+     ******************************************************************/
+
+    function alarmConfiguredVehicles(rows) {
+
+        const config = loadConfig();
+
+
+        /*
+         * SEG-ELW
+         */
+        if (
+            config.ELW_SEG.enabled &&
+            config.ELW_SEG.amount > 0
+        ) {
+
+            selectVehicles(
+                rows,
+                config.ELW_SEG.vehicle,
+                config.ELW_SEG.amount
+            );
+        }
+
+
+        /*
+         * LNA
+         */
+        if (
+            config.LNA.enabled &&
+            config.LNA.amount > 0
+        ) {
+
+            selectVehicles(
+                rows,
+                config.LNA.vehicle,
+                config.LNA.amount
+            );
+        }
+
+
+        /*
+         * OrgL
+         */
+        if (
+            config.ORGL.enabled &&
+            config.ORGL.amount > 0
+        ) {
+
+            selectVehicles(
+                rows,
+                config.ORGL.vehicle,
+                config.ORGL.amount
+            );
+        }
+
+
+        /*
+         * NAW
+         *
+         * Wenn NAW aktiviert ist, wird zuerst versucht,
+         * einen NAW zu alarmieren.
+         *
+         * Nur wenn kein NAW vorhanden ist,
+         * werden NEF alarmiert.
+         */
+        let nawSelected = 0;
+
+
+        if (
+            config.NAW.enabled &&
+            config.NAW.amount > 0
+        ) {
+
+            nawSelected =
+                selectVehicles(
+                    rows,
+                    config.NAW.vehicle,
+                    config.NAW.amount
+                );
+        }
+
+
+        /*
+         * NEF
+         */
+        if (
+            config.NEF.enabled &&
+            config.NEF.amount > 0
+        ) {
+
+            selectVehicles(
+                rows,
+                config.NEF.vehicle,
+                config.NEF.amount
+            );
+        }
+
+
+        /*
+         * RTW
+         */
+        if (
+            config.RTW.enabled &&
+            config.RTW.amount > 0
+        ) {
+
+            selectVehicles(
+                rows,
+                config.RTW.vehicle,
+                config.RTW.amount
+            );
+        }
+
+
+        /*
+         * RTH
+         */
+        if (
+            config.RTH.enabled &&
+            config.RTH.amount > 0
+        ) {
+
+            selectVehicles(
+                rows,
+                config.RTH.vehicle,
+                config.RTH.amount
+            );
+        }
+    }
+
+
+    /******************************************************************
+     * KONFIGURATOR
+     ******************************************************************/
+
+    function openConfigurator() {
+
+        const old =
+            document.getElementById(
+                'lssRdConfigurator'
+            );
+
+        if (old) {
+            old.remove();
+        }
+
+
+        const config = loadConfig();
+
+
+        const overlay =
+            document.createElement('div');
+
+        overlay.id =
+            'lssRdConfigurator';
+
+
+        overlay.style.position = 'fixed';
+        overlay.style.top = '80px';
+        overlay.style.left = '50%';
+        overlay.style.transform = 'translateX(-50%)';
+        overlay.style.zIndex = '999999';
+
+
+        overlay.style.background = '#ffffff';
+        overlay.style.border = '1px solid #aaa';
+        overlay.style.borderRadius = '6px';
+        overlay.style.boxShadow =
+            '0 5px 25px rgba(0,0,0,0.4)';
+
+
+        overlay.style.width = '430px';
+        overlay.style.maxWidth = '95vw';
+
+
+        /**************************************************************
+         * HEADER
+         **************************************************************/
+
+        const header =
+            document.createElement('div');
+
+        header.style.background = '#337ab7';
+        header.style.color = '#fff';
+        header.style.padding = '10px 12px';
+        header.style.fontWeight = 'bold';
+        header.style.fontSize = '15px';
+
+
+        header.innerHTML =
+            '⚙ RD-Autoalarm Konfigurator';
+
+
+        overlay.appendChild(header);
+
+
+        /**************************************************************
+         * INHALT
+         **************************************************************/
+
+        const content =
+            document.createElement('div');
+
+        content.style.padding = '12px';
+
+
+        const info =
+            document.createElement('div');
+
+        info.style.marginBottom = '10px';
+        info.style.color = '#555';
+        info.style.fontSize = '12px';
+
+
+        info.innerHTML =
+            'Nur aktivierte Fahrzeugtypen werden automatisch alarmiert.';
+
+
+        content.appendChild(info);
+
+
+        /**************************************************************
+         * FAHRZEUGE
+         **************************************************************/
+
+        const keys = [
+            'ELW_SEG',
+            'LNA',
+            'ORGL',
+            'NAW',
+            'NEF',
+            'RTW',
+            'RTH'
+        ];
+
+
+        keys.forEach(key => {
+
+            const item =
+                document.createElement('div');
+
+            item.style.display = 'flex';
+            item.style.alignItems = 'center';
+            item.style.marginBottom = '7px';
+
+
+            /*
+             * Checkbox
+             */
+
+            const checkbox =
+                document.createElement('input');
+
+            checkbox.type = 'checkbox';
+
+            checkbox.checked =
+                config[key].enabled;
+
+            checkbox.dataset.key = key;
+
+            checkbox.style.margin =
+                '0 8px 0 0';
+
+
+            /*
+             * Name
+             */
+
+            const label =
+                document.createElement('span');
+
+            label.textContent =
+                config[key].name;
+
+            label.style.width = '80px';
+
+
+            /*
+             * Anzahl
+             */
+
+            const number =
+                document.createElement('input');
+
+            number.type = 'number';
+
+            number.min = '0';
+            number.max = '50';
+            number.step = '1';
+
+            number.value =
+                config[key].amount;
+
+            number.dataset.key = key;
+
+            number.style.width = '65px';
+            number.style.marginRight = '8px';
+
+
+            const fahrzeug =
+                document.createElement('span');
+
+            fahrzeug.textContent =
+                config[key].vehicle;
+
+            fahrzeug.style.color = '#777';
+            fahrzeug.style.fontSize = '11px';
+
+
+            item.appendChild(checkbox);
+            item.appendChild(label);
+            item.appendChild(number);
+            item.appendChild(fahrzeug);
+
+
+            content.appendChild(item);
+        });
+
+
+        /**************************************************************
+         * BUTTONS
+         **************************************************************/
+
+        const buttonArea =
+            document.createElement('div');
+
+        buttonArea.style.marginTop = '14px';
+        buttonArea.style.textAlign = 'right';
+
+
+        const saveButton =
+            document.createElement('button');
+
+        saveButton.type = 'button';
+
+        saveButton.className =
+            'btn btn-success btn-sm';
+
+        saveButton.innerHTML =
+            '✓ Speichern';
+
+
+        saveButton.addEventListener(
+            'click',
+            function () {
+
+                keys.forEach(key => {
+
+                    const checkbox =
+                        content.querySelector(
+                            'input[type="checkbox"][data-key="' +
+                            key +
+                            '"]'
+                        );
+
+                    const number =
+                        content.querySelector(
+                            'input[type="number"][data-key="' +
+                            key +
+                            '"]'
+                        );
+
+
+                    config[key].enabled =
+                        checkbox.checked;
+
+
+                    let amount =
+                        parseInt(
+                            number.value,
+                            10
+                        );
+
+
+                    if (
+                        isNaN(amount) ||
+                        amount < 0
+                    ) {
+                        amount = 0;
+                    }
+
+
+                    config[key].amount =
+                        amount;
+                });
+
+
+                saveConfig(config);
+
+                overlay.remove();
+
+
+                /*
+                 * Kurze Bestätigung
+                 */
+
+                const msg =
+                    document.createElement('div');
+
+                msg.textContent =
+                    'RD-Konfiguration gespeichert.';
+
+                msg.style.position = 'fixed';
+                msg.style.top = '80px';
+                msg.style.right = '20px';
+                msg.style.zIndex = '1000000';
+
+                msg.style.background =
+                    '#5cb85c';
+
+                msg.style.color = '#fff';
+
+                msg.style.padding =
+                    '10px 15px';
+
+                msg.style.borderRadius =
+                    '4px';
+
+
+                document.body.appendChild(msg);
+
+
+                setTimeout(
+                    () => msg.remove(),
+                    1800
+                );
+            }
+        );
+
+
+        const cancelButton =
+            document.createElement('button');
+
+        cancelButton.type = 'button';
+
+        cancelButton.className =
+            'btn btn-default btn-sm';
+
+        cancelButton.style.marginRight =
+            '6px';
+
+        cancelButton.innerHTML =
+            'Abbrechen';
+
+
+        cancelButton.addEventListener(
+            'click',
+            function () {
+                overlay.remove();
+            }
+        );
+
+
+        buttonArea.appendChild(
+            cancelButton
+        );
+
+        buttonArea.appendChild(
+            saveButton
+        );
+
+
+        content.appendChild(
+            buttonArea
+        );
+
+
+        overlay.appendChild(
+            content
+        );
+
+
+        document.body.appendChild(
+            overlay
+        );
+
+
+        /*
+         * Klick außerhalb schließt den Konfigurator
+         */
+
+        overlay.addEventListener(
+            'click',
+            function (event) {
+
+                if (event.target === overlay) {
+                    overlay.remove();
+                }
+            }
+        );
+    }
+
+
+    /******************************************************************
+     * BUTTONS EINBAUEN
+     *
+     * WICHTIG:
+     * Der originale Container aus deiner funktionierenden 2.1
+     * wird weiterhin verwendet.
+     ******************************************************************/
+
+    function addButtons() {
+
+        const container =
+            document.querySelector(
+                '.mission-participation-filters'
+            );
+
+
+        if (!container) {
+
+            console.log(
+                '[RD-Autoalarm] Button-Container noch nicht vorhanden.'
+            );
+
+            return;
+        }
+
+
+        /*
+         * ORIGINALER STARTBUTTON
+         */
+
+        let startButton =
+            document.getElementById(
+                'lssRdAutoAlarmButton'
+            );
+
+
+        if (!startButton) {
+
+            startButton =
+                document.createElement('a');
+
+            startButton.id =
+                'lssRdAutoAlarmButton';
+
+            startButton.href = '#';
+
+            startButton.className =
+                'btn btn-xs btn-success';
+
+            startButton.title =
+                'RD-Autoalarm für meine freigegebenen Einsätze';
+
+            startButton.style.marginLeft =
+                '4px';
+
+            startButton.innerHTML =
+                '<span class="glyphicon glyphicon-plus-sign"></span> RD Autoalarm';
+
+
+            startButton.addEventListener(
+                'click',
+                function (event) {
+
+                    event.preventDefault();
+
+                    start();
+                }
+            );
+
+
+            /*
+             * GENAU WIE IN DER FUNKTIONIERENDEN 2.1
+             */
+
+            container.appendChild(
+                startButton
+            );
+
+
+            console.log(
+                '[RD-Autoalarm] Originaler Startbutton eingefügt.'
+            );
+        }
+
+
+        /*
+         * KONFIGURATORBUTTON
+         */
+
+        let configButton =
+            document.getElementById(
+                'lssRdConfiguratorButton'
+            );
+
+
+        if (!configButton) {
+
+            configButton =
+                document.createElement('a');
+
+            configButton.id =
+                'lssRdConfiguratorButton';
+
+            configButton.href = '#';
+
+            configButton.className =
+                'btn btn-xs btn-success';
+
+            configButton.title =
+                'RD-Autoalarm konfigurieren';
+
+            configButton.style.marginLeft =
+                '4px';
+
+            configButton.innerHTML =
+                '<span class="glyphicon glyphicon-cog"></span> Konfigurator';
+
+
+            configButton.addEventListener(
+                'click',
+                function (event) {
+
+                    event.preventDefault();
+
+                    openConfigurator();
+                }
+            );
+
+
+            /*
+             * DIREKT NEBEN DEM STARTBUTTON
+             */
+
+            if (startButton.parentNode === container) {
+
+                startButton.insertAdjacentElement(
+                    'afterend',
+                    configButton
+                );
+
+            } else {
+
+                container.appendChild(
+                    configButton
+                );
+            }
+
+
+            console.log(
+                '[RD-Autoalarm] Konfiguratorbutton eingefügt.'
+            );
+        }
+    }
+
+
+    /******************************************************************
+     * ROBUSTE BUTTON-ÜBERWACHUNG
+     ******************************************************************/
+
+    function watchForButtons() {
+
+        /*
+         * Sofort
+         */
+
+        addButtons();
+
+
+        /*
+         * Nachladen
+         */
+
+        setTimeout(
+            addButtons,
+            500
+        );
+
+        setTimeout(
+            addButtons,
+            1000
+        );
+
+        setTimeout(
+            addButtons,
+            2000
+        );
+
+        setTimeout(
+            addButtons,
+            3000
+        );
+
+        setTimeout(
+            addButtons,
+            5000
+        );
+
+
+        /*
+         * MutationObserver
+         *
+         * Leitstellenspiel baut Teile der Seite dynamisch um.
+         */
+
+        const observer =
+            new MutationObserver(
+                function () {
+
+                    if (
+                        !document.getElementById(
+                            'lssRdAutoAlarmButton'
+                        ) ||
+                        !document.getElementById(
+                            'lssRdConfiguratorButton'
+                        )
+                    ) {
+
+                        addButtons();
+                    }
+                }
+            );
+
+
+        observer.observe(
+            document.body,
+            {
+                childList: true,
+                subtree: true
+            }
+        );
+    }
+
+
+    /******************************************************************
+     * START
+     ******************************************************************/
+
+    async function start() {
+
+        const missions =
+            getSharedMissions();
+
+
+        console.log(
+            '[RD-Autoalarm] Freigegebene Einsätze:',
+            missions
+        );
+
+
+        if (missions.length === 0) {
+
+            alert(
+                'Keine freigegebenen Einsätze gefunden.'
+            );
+
+            return;
+        }
+
+
+        sessionStorage.setItem(
+            QUEUE_KEY,
+            JSON.stringify({
+                missions: missions,
+                index: 0
+            })
+        );
+
+
+        const first =
+            missions[0];
+
+
+        console.log(
+            '[RD-Autoalarm] Öffne ersten Einsatz in neuem Tab:',
+            first.id
+        );
+
+
+        window.open(
+            '/missions/' + first.id,
+            '_blank'
+        );
+    }
+
+
+    /******************************************************************
+     * NÄCHSTEN EINSATZ VERARBEITEN
+     ******************************************************************/
+
+    async function processNext() {
+
+        const raw =
+            sessionStorage.getItem(
+                QUEUE_KEY
+            );
+
+
+        if (!raw) {
+            return;
+        }
+
+
+        let queue;
+
+
+        try {
+
+            queue =
+                JSON.parse(raw);
+
+        } catch (e) {
+
+            sessionStorage.removeItem(
+                QUEUE_KEY
+            );
+
+            return;
+        }
+
+
+        if (
+            !queue.missions ||
+            queue.index >= queue.missions.length
+        ) {
+
+            sessionStorage.removeItem(
+                QUEUE_KEY
+            );
+
+
+            alert(
+                'RD-Autoalarm fertig.\n\n' +
+                'Bearbeitete Einsätze: ' +
+                queue.missions.length
+            );
+
+            return;
+        }
+
+
+        const mission =
+            queue.missions[
+                queue.index
+            ];
+
+
+        const current =
+            location.pathname.match(
+                /^\/missions\/(\d+)/
+            );
+
+
+        if (
+            current &&
+            current[1] === String(mission.id)
+        ) {
+
+            await alarmCurrentMission();
+
+            return;
+        }
+
+
+        console.log(
+            '[RD-Autoalarm] Öffne Einsatz',
+            mission.id
+        );
+
+
+        location.href =
+            '/missions/' + mission.id;
+    }
+
+
+    /******************************************************************
+     * AKTUELLEN EINSATZ ALARMIEREN
+     ******************************************************************/
+
+    async function alarmCurrentMission() {
+
+        await sleep(1500);
+
+
+        const current =
+            location.pathname.match(
+                /^\/missions\/(\d+)/
+            );
+
+
+        if (!current) {
+            return;
+        }
+
+
+        const missionId =
+            current[1];
+
+
+        /*
+         * WICHTIG:
+         * RD wird NUR alarmiert, wenn Patienten vorhanden sind.
+         */
+
+        const patients =
+            getPatientCount(missionId);
+
+
+        console.log(
+            '[RD-Autoalarm] Patienten:',
+            patients
+        );
+
+
+        if (patients <= 0) {
+
+            console.log(
+                '[RD-Autoalarm] Keine Patienten -> Einsatz übersprungen.'
+            );
+
+
+            nextMission();
+
+            return;
+        }
+
+
+        const rows =
+            Array.from(
+                document.querySelectorAll(
+                    '#vehicle_show_table_body_all .vehicle_select_table_tr'
+                )
+            );
+
+
+        if (rows.length === 0) {
+
+            console.log(
+                '[RD-Autoalarm] Keine Fahrzeugliste gefunden.'
+            );
+
+
+            nextMission();
+
+            return;
+        }
+
+
+        console.log(
+            '[RD-Autoalarm] Fahrzeuge:',
+            rows.length
+        );
+
+
+        /*
+         * KONFIGURATION ANWENDEN
+         */
+
+        alarmConfiguredVehicles(rows);
+
+
+        await sleep(700);
+
+
+        const alarmButton =
+            document.querySelector(
+                '#mission_alarm_btn'
+            );
+
+
+        if (!alarmButton) {
+
+            console.log(
+                '[RD-Autoalarm] Alarmbutton nicht gefunden.'
+            );
+
+
+            alert(
+                'Alarmbutton wurde nicht gefunden.\nEinsatz: ' +
+                missionId
+            );
+
+            return;
+        }
+
+
+        /*
+         * NÄCHSTEN EINSATZ VORMERKEN
+         */
+
+        const raw =
+            sessionStorage.getItem(
+                QUEUE_KEY
+            );
+
+
+        if (raw) {
+
+            try {
+
+                const queue =
+                    JSON.parse(raw);
+
+                queue.index++;
+
+
+                sessionStorage.setItem(
+                    QUEUE_KEY,
+                    JSON.stringify(queue)
+                );
+
+            } catch (e) {}
+        }
+
+
+        console.log(
+            '[RD-Autoalarm] ALARMIERE Einsatz',
+            missionId
+        );
+
+
+        alarmButton.click();
+
+
+        await sleep(2500);
+
+
+        processNext();
+    }
+
+
+    /******************************************************************
+     * EINSATZ ÜBERSPRINGEN
+     ******************************************************************/
+
+    function nextMission() {
+
+        const raw =
+            sessionStorage.getItem(
+                QUEUE_KEY
+            );
+
+
+        if (!raw) {
+            return;
+        }
+
+
+        let queue;
+
+
+        try {
+
+            queue =
+                JSON.parse(raw);
+
+        } catch (e) {
+
+            return;
+        }
+
+
+        queue.index++;
+
+
+        sessionStorage.setItem(
+            QUEUE_KEY,
+            JSON.stringify(queue)
+        );
+
+
+        processNext();
+    }
+
+
+    /******************************************************************
+     * INITIALISIERUNG
+     ******************************************************************/
+
+    function init() {
+
+        console.log(
+            '[RD-Autoalarm] Script 2.2 gestartet.'
+        );
+
+
+        /*
+         * BUTTONS
+         */
+
+        watchForButtons();
+
+
+        /*
+         * Falls bereits ein Alarmvorgang läuft
+         */
+
+        if (
+            sessionStorage.getItem(
+                QUEUE_KEY
+            )
+        ) {
+
+            setTimeout(
+                processNext,
+                1200
+            );
+        }
+    }
+
+
+    init();
+
+})();
