@@ -1,0 +1,890 @@
+// ==UserScript==
+// @name         LSS - RD Autoalarm freigegebene Einsätze
+// @namespace    https://www.leitstellenspiel.de/
+// @version      2.1
+// @description  Automatische RD-Alarmierung für eigene freigegebene Einsätze
+// @author       Christian
+// @match        https://www.leitstellenspiel.de/*
+// @grant        none
+// ==/UserScript==
+
+(function () {
+    'use strict';
+
+    /************************************************************
+     * EINSTELLUNGEN
+     ************************************************************/
+
+    const CONFIG = {
+
+        // SEG-ELW
+        ELW_SEG: 1,
+
+        // LNA
+        LNA: 1,
+
+        // OrgL
+        ORGL: 1,
+
+        // maximal NEF
+        NEF: 10,
+
+        // maximal RTW
+        RTW: 10,
+
+        // maximal RTH
+        RTH: 1,
+
+        // Wenn ein NAW vorhanden ist:
+        // 1 NAW bevorzugen und dafür NEF nicht zusätzlich nehmen
+        NAW_BEVORZUGEN: true,
+
+        // Pause zwischen Einsätzen
+        PAUSE: 2500
+    };
+
+    const STORAGE_KEY = 'lss_rd_autoalarm_v2';
+
+    /************************************************************
+     * HILFSFUNKTION
+     ************************************************************/
+
+    function sleep(ms) {
+        return new Promise(resolve => setTimeout(resolve, ms));
+    }
+
+    /************************************************************
+     * PATIENTEN ERMITTELN
+     *
+     * FIX v2.1:
+     * Die alten Selektoren (#mission_patient_summary_<id> und
+     * #mission_patients_<id>) existieren im aktuellen LSS-DOM
+     * nicht mehr, wodurch immer 0 Patienten erkannt wurden und
+     * dadurch jeder Einsatz übersprungen wurde - selbst wenn
+     * tatsächlich Patienten vorhanden waren.
+     *
+     * Jeder Patient wird auf der Einsatzseite als eigenes
+     * Element mit der Klasse .mission_patient dargestellt.
+     * Das ist jetzt die primäre Erkennung, die alten Selektoren
+     * bleiben als Fallback erhalten.
+     ************************************************************/
+
+    function getPatientCount(missionId) {
+
+        // Primär: .mission_patient Elemente auf der Einsatzseite
+        const patientElements =
+            document.querySelectorAll('.mission_patient');
+
+        if (patientElements.length > 0) {
+            return patientElements.length;
+        }
+
+        // Fallback 1: alte Selektoren
+        const summary = document.querySelector(
+            '#mission_patient_summary_' + missionId
+        );
+
+        if (summary) {
+
+            const strong = summary.querySelector('strong');
+
+            if (strong) {
+
+                const match = strong.textContent.match(/\d+/);
+
+                if (match) {
+                    return parseInt(match[0], 10);
+                }
+            }
+
+            const match = summary.textContent.match(/\d+/);
+
+            if (match) {
+                return parseInt(match[0], 10);
+            }
+        }
+
+        const patients = document.querySelector(
+            '#mission_patients_' + missionId
+        );
+
+        if (patients) {
+
+            return patients.children.length;
+        }
+
+        // Fallback 2: Patiententext im Mission-Header (z.B. "... | 3")
+        const headerInfo = document.querySelector(
+            '.mission_header_info .col-md-6:first-of-type>small'
+        );
+
+        if (headerInfo) {
+
+            const match =
+                headerInfo.textContent.match(/\|\s*(\d+)/);
+
+            if (match) {
+                return parseInt(match[1], 10);
+            }
+        }
+
+        return 0;
+    }
+
+    /************************************************************
+     * EINSATZ-ID AUS EINTRAG ERMITTELN
+     ************************************************************/
+
+    function getMissionId(entry) {
+
+        if (!entry) {
+            return null;
+        }
+
+        /*
+         * Der eigentliche Einsatz-Eintrag heißt normalerweise
+         * mission_123456
+         */
+        if (entry.id) {
+
+            const match = entry.id.match(/^mission_(\d+)$/);
+
+            if (match) {
+                return match[1];
+            }
+        }
+
+        /*
+         * Fallback über Link
+         */
+        const link = entry.querySelector(
+            'a[href*="/missions/"]'
+        );
+
+        if (link) {
+
+            const match = link.href.match(
+                /\/missions\/(\d+)/
+            );
+
+            if (match) {
+                return match[1];
+            }
+        }
+
+        return null;
+    }
+
+    /************************************************************
+     * FREIGEGEBENE EINSÄTZE FINDEN
+     ************************************************************/
+
+    function getSharedMissions() {
+
+        const result = [];
+
+        /*
+         * Wir suchen alle Einsatz-Einträge.
+         */
+        const entries = Array.from(
+            document.querySelectorAll(
+                '#mission_list > .missionSideBarEntry'
+            )
+        );
+
+        console.log(
+            '[RD-Autoalarm] Einsatz-Einträge:',
+            entries.length
+        );
+
+        entries.forEach(entry => {
+
+            const missionId = getMissionId(entry);
+
+            if (!missionId) {
+                return;
+            }
+
+            /*
+             * Panel des Einsatzes
+             */
+            const panel = document.querySelector(
+                '#mission_panel_' + missionId
+            );
+
+            if (!panel) {
+                return;
+            }
+
+            /*
+             * Dein MissionShare verwendet genau diese beiden
+             * Klassen als Ausschluss für bereits bearbeitete /
+             * nicht mehr teilbare Einsätze.
+             *
+             * Für dieses Script wollen wir diese Einsätze haben.
+             */
+            const isGreen =
+                panel.classList.contains(
+                    'mission_panel_green'
+                );
+
+            const isSuccess =
+                panel.classList.contains(
+                    'panel-success'
+                );
+
+            if (!isGreen && !isSuccess) {
+                return;
+            }
+
+            result.push({
+                id: missionId
+            });
+        });
+
+        /*
+         * Falls die Struktur bei einer LSS-Version anders ist,
+         * zusätzlich direkt nach den grünen Panels suchen.
+         */
+        if (result.length === 0) {
+
+            document
+                .querySelectorAll(
+                    '#mission_list .mission_panel_green'
+                )
+                .forEach(panel => {
+
+                    const match =
+                        panel.id.match(
+                            /mission_panel_(\d+)/
+                        );
+
+                    if (!match) {
+                        return;
+                    }
+
+                    const id = match[1];
+
+                    if (!result.some(x => x.id === id)) {
+
+                        result.push({
+                            id: id
+                        });
+                    }
+                });
+        }
+
+        return result;
+    }
+
+    /************************************************************
+     * BUTTON
+     ************************************************************/
+
+    function addButton() {
+
+        if (
+            document.getElementById(
+                'lssRdAutoAlarmButton'
+            )
+        ) {
+            return;
+        }
+
+        const container =
+            document.querySelector(
+                '.mission-participation-filters'
+            );
+
+        if (!container) {
+            return;
+        }
+
+        const button =
+            document.createElement('a');
+
+        button.id =
+            'lssRdAutoAlarmButton';
+
+        button.href = '#';
+
+        button.className =
+            'btn btn-xs btn-success';
+
+        button.title =
+            'RD-Autoalarm für meine freigegebenen Einsätze';
+
+        button.style.marginLeft = '4px';
+
+        button.innerHTML =
+            '<span class="glyphicon glyphicon-plus-sign"></span> ' +
+            'RD Autoalarm';
+
+        button.addEventListener(
+            'click',
+            function (event) {
+
+                event.preventDefault();
+
+                start();
+            }
+        );
+
+        /*
+         * Direkt neben den vorhandenen Buttons.
+         */
+        container.appendChild(button);
+
+        console.log(
+            '[RD-Autoalarm] Button eingefügt.'
+        );
+    }
+
+    /************************************************************
+     * START
+     ************************************************************/
+
+    async function start() {
+
+        const missions =
+            getSharedMissions();
+
+        console.log(
+            '[RD-Autoalarm] Freigegebene Einsätze:',
+            missions
+        );
+
+        if (missions.length === 0) {
+
+            alert(
+                'Keine freigegebenen Einsätze gefunden.'
+            );
+
+            return;
+        }
+
+        /*
+         * Queue speichern
+         */
+        sessionStorage.setItem(
+            STORAGE_KEY,
+            JSON.stringify({
+                missions: missions,
+                index: 0
+            })
+        );
+
+        /*
+         * ersten Einsatz in NEUEM TAB öffnen.
+         *
+         * sessionStorage wird bei window.open() (selbe
+         * Origin) automatisch in den neuen Tab kopiert,
+         * d.h. die Queue ist dort sofort vorhanden und
+         * init() im neuen Tab übernimmt automatisch die
+         * Weiterverarbeitung (alle folgenden Einsätze
+         * laufen dann normal im selben neuen Tab weiter).
+         */
+        const first =
+            missions[0];
+
+        console.log(
+            '[RD-Autoalarm] Öffne ersten Einsatz in neuem Tab:',
+            first.id
+        );
+
+        window.open(
+            '/missions/' + first.id,
+            '_blank'
+        );
+    }
+
+    /************************************************************
+     * NÄCHSTEN EINSATZ
+     ************************************************************/
+
+    async function processNext() {
+
+        const raw =
+            sessionStorage.getItem(
+                STORAGE_KEY
+            );
+
+        if (!raw) {
+            return;
+        }
+
+        let queue;
+
+        try {
+            queue = JSON.parse(raw);
+        } catch (e) {
+
+            sessionStorage.removeItem(
+                STORAGE_KEY
+            );
+
+            return;
+        }
+
+        if (
+            !queue.missions ||
+            queue.index >= queue.missions.length
+        ) {
+
+            sessionStorage.removeItem(
+                STORAGE_KEY
+            );
+
+            alert(
+                'RD-Autoalarm fertig.\n\n' +
+                'Bearbeitete Einsätze: ' +
+                queue.missions.length
+            );
+
+            return;
+        }
+
+        const mission =
+            queue.missions[queue.index];
+
+        const current =
+            location.pathname.match(
+                /^\/missions\/(\d+)/
+            );
+
+        /*
+         * Sind wir schon auf dem Einsatz?
+         */
+        if (
+            current &&
+            current[1] === String(mission.id)
+        ) {
+
+            await alarmCurrentMission();
+
+            return;
+        }
+
+        console.log(
+            '[RD-Autoalarm] Öffne Einsatz',
+            mission.id
+        );
+
+        location.href =
+            '/missions/' + mission.id;
+    }
+
+    /************************************************************
+     * FAHRZEUGTYP AUS ZEILE
+     ************************************************************/
+
+    function getVehicleType(row) {
+
+        /*
+         * Primär: vehicle_type
+         */
+        const attr =
+            row.getAttribute('vehicle_type');
+
+        if (attr) {
+            return attr.trim();
+        }
+
+        /*
+         * Fallback über Checkbox
+         */
+        const checkbox =
+            row.querySelector(
+                '.vehicle_checkbox'
+            );
+
+        if (checkbox) {
+
+            const type =
+                checkbox.getAttribute(
+                    'vehicle_type'
+                );
+
+            if (type) {
+                return type.trim();
+            }
+        }
+
+        /*
+         * Fallback über Text
+         */
+        return row.textContent
+            .replace(/\s+/g, ' ')
+            .trim();
+    }
+
+    /************************************************************
+     * FAHRZEUG AUSWÄHLEN
+     ************************************************************/
+
+    function selectVehicles(
+        rows,
+        vehicleType,
+        amount
+    ) {
+
+        let selected = 0;
+
+        for (const row of rows) {
+
+            if (selected >= amount) {
+                break;
+            }
+
+            const checkbox =
+                row.querySelector(
+                    '.vehicle_checkbox'
+                );
+
+            if (!checkbox) {
+                continue;
+            }
+
+            if (
+                checkbox.disabled ||
+                checkbox.checked
+            ) {
+                continue;
+            }
+
+            const type =
+                getVehicleType(row);
+
+            /*
+             * Exakter Typ
+             */
+            if (type === vehicleType) {
+
+                checkbox.click();
+
+                if (checkbox.checked) {
+                    selected++;
+                }
+            }
+        }
+
+        console.log(
+            '[RD-Autoalarm]',
+            vehicleType,
+            selected + '/' + amount
+        );
+
+        return selected;
+    }
+
+    /************************************************************
+     * AKTUELLEN EINSATZ ALARMIEREN
+     ************************************************************/
+
+    async function alarmCurrentMission() {
+
+        await sleep(1500);
+
+        const current =
+            location.pathname.match(
+                /^\/missions\/(\d+)/
+            );
+
+        if (!current) {
+            return;
+        }
+
+        const missionId =
+            current[1];
+
+        const patients =
+            getPatientCount(
+                missionId
+            );
+
+        console.log(
+            '[RD-Autoalarm] Patienten:',
+            patients
+        );
+
+        /*
+         * GANZ WICHTIG:
+         *
+         * Kein Patient = kein RD-Autoalarm.
+         */
+        if (patients <= 0) {
+
+            console.log(
+                '[RD-Autoalarm] Keine Patienten -> Einsatz übersprungen.'
+            );
+
+            nextMission();
+
+            return;
+        }
+
+        /*
+         * Fahrzeugliste
+         */
+        const rows =
+            Array.from(
+                document.querySelectorAll(
+                    '#vehicle_show_table_body_all .vehicle_select_table_tr'
+                )
+            );
+
+        if (rows.length === 0) {
+
+            console.log(
+                '[RD-Autoalarm] Keine Fahrzeugliste gefunden.'
+            );
+
+            nextMission();
+
+            return;
+        }
+
+        console.log(
+            '[RD-Autoalarm] Fahrzeuge:',
+            rows.length
+        );
+
+        /*
+         * SEG ELW
+         */
+        selectVehicles(
+            rows,
+            'ELW 1 (SEG)',
+            CONFIG.ELW_SEG
+        );
+
+        /*
+         * LNA
+         */
+        selectVehicles(
+            rows,
+            'KdoW-LNA',
+            CONFIG.LNA
+        );
+
+        /*
+         * OrgL
+         */
+        selectVehicles(
+            rows,
+            'KdoW-Orgl',
+            CONFIG.ORGL
+        );
+
+        /*
+         * NAW bevorzugen
+         */
+        let nawSelected = 0;
+
+        if (CONFIG.NAW_BEVORZUGEN) {
+
+            nawSelected =
+                selectVehicles(
+                    rows,
+                    'NAW',
+                    1
+                );
+        }
+
+        /*
+         * NEF + RTW
+         *
+         * Wenn NAW gewählt wurde,
+         * wird kein zusätzlicher NEF-Satz
+         * angefordert.
+         */
+        if (nawSelected === 0) {
+
+            selectVehicles(
+                rows,
+                'NEF',
+                CONFIG.NEF
+            );
+        }
+
+        /*
+         * RTW immer dazu
+         */
+        selectVehicles(
+            rows,
+            'RTW',
+            CONFIG.RTW
+        );
+
+        /*
+         * RTH nur bei Patienten.
+         */
+        selectVehicles(
+            rows,
+            'RTH',
+            CONFIG.RTH
+        );
+
+        await sleep(700);
+
+        /*
+         * Normale LSS-Alarmierung
+         */
+        const alarmButton =
+            document.querySelector(
+                '#mission_alarm_btn'
+            );
+
+        if (!alarmButton) {
+
+            console.log(
+                '[RD-Autoalarm] Alarmbutton nicht gefunden.'
+            );
+
+            alert(
+                'Alarmbutton wurde nicht gefunden.\n' +
+                'Einsatz: ' + missionId
+            );
+
+            return;
+        }
+
+        /*
+         * WICHTIG (Fix Logikfehler):
+         *
+         * Die Queue MUSS VOR dem Klick auf den Alarmbutton
+         * weitergezählt und gespeichert werden.
+         *
+         * Der Alarmbutton kann einen Seitenwechsel / Reload
+         * auslösen. Passiert das, wird jeglicher Code NACH
+         * click() nicht mehr ausgeführt, weil der Script-
+         * Kontext mit der Seite verschwindet. Ohne diesen
+         * Schritt VORHER würde die Queue nie weitergezählt
+         * und das Script würde auf dem alarmierten Einsatz
+         * hängen bleiben (Alarmbutton danach nicht mehr
+         * gefunden -> Abbruch).
+         */
+        const raw =
+            sessionStorage.getItem(
+                STORAGE_KEY
+            );
+
+        if (raw) {
+
+            try {
+
+                const queue = JSON.parse(raw);
+
+                queue.index++;
+
+                sessionStorage.setItem(
+                    STORAGE_KEY,
+                    JSON.stringify(queue)
+                );
+
+            } catch (e) {
+                // ignorieren, Queue ist dann eben weg
+            }
+        }
+
+        console.log(
+            '[RD-Autoalarm] ALARMIERE Einsatz',
+            missionId
+        );
+
+        alarmButton.click();
+
+        await sleep(
+            CONFIG.PAUSE
+        );
+
+        /*
+         * Falls KEIN Seitenwechsel stattgefunden hat
+         * (z.B. weil die Alarmierung rein per AJAX läuft
+         * und man auf der Seite bleibt), hier direkt
+         * weitermachen. Bei einem Seitenwechsel übernimmt
+         * init() nach dem Reload automatisch.
+         */
+        processNext();
+    }
+
+    /************************************************************
+     * NÄCHSTER EINSATZ
+     ************************************************************/
+
+    function nextMission() {
+
+        const raw =
+            sessionStorage.getItem(
+                STORAGE_KEY
+            );
+
+        if (!raw) {
+            return;
+        }
+
+        let queue;
+
+        try {
+            queue = JSON.parse(raw);
+        } catch (e) {
+            return;
+        }
+
+        queue.index++;
+
+        sessionStorage.setItem(
+            STORAGE_KEY,
+            JSON.stringify(queue)
+        );
+
+        processNext();
+    }
+
+    /************************************************************
+     * INIT
+     ************************************************************/
+
+    function init() {
+
+        addButton();
+
+        setTimeout(
+            addButton,
+            1000
+        );
+
+        setTimeout(
+            addButton,
+            3000
+        );
+
+        /*
+         * Nach Seitenwechsel innerhalb des
+         * automatischen Durchlaufs weitermachen.
+         *
+         * WICHTIG (Fix Logikfehler):
+         * Diese Prüfung darf NICHT vom aktuellen Pfad
+         * abhängen. Der Alarm-Klick kann auch auf eine
+         * andere Seite als /missions/<id> führen (z.B.
+         * zurück zur Übersicht). Solange eine Queue in
+         * sessionStorage existiert, muss weitergemacht
+         * werden - processNext() kümmert sich selbst
+         * darum, zur richtigen Einsatzseite zu navigieren.
+         */
+        if (
+            sessionStorage.getItem(
+                STORAGE_KEY
+            )
+        ) {
+
+            setTimeout(
+                processNext,
+                1200
+            );
+        }
+    }
+
+    init();
+
+})();
