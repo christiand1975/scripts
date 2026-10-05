@@ -1,0 +1,348 @@
+// ==UserScript==
+// @name         LSS: Fahrzeug-Abgleich (benötigt vs. unterwegs)
+// @version      3.14.0
+// @description  Zeigt im Einsatzfenster pro Anforderung: was noch fehlt, was anfährt (inkl. angehakter Fahrzeuge) und was vor Ort ist.
+// @match        https://www.leitstellenspiel.de/missions/*
+// @run-at       document-idle
+// @grant        none
+// ==/UserScript==
+
+(function () {
+    'use strict';
+
+    // ---------- Einstellungen ----------
+    const SOURCE_ID = 'missing_text';
+    const BOX_ID = 'lss-abgleich';
+    const LANG = 'de_DE';          // Sprache der Typnamen (LSSM-API)
+    const HIDE_ORIGINAL = false;
+
+    // Zuordnung Anforderung -> Fahrzeugtyp (nur nötig, wenn Namen nicht gleich lauten).
+    // Die erste passende Regel entscheidet.
+    const RULES = [
+        { req: /(funkstreifenwagen|fustw).*(dienstgruppen|dgl)/i, veh: /(fustw|funkstreifenwagen|streifenwagen).*(dgl|dienstgruppen)/i },
+        { req: /drehleiter/i,            veh: /^(DLK|DL |Drehleiter)/i },
+        { req: /rüstwagen|ruestwagen/i,  veh: /^(RW|Rüstwagen)/i },
+        { req: /rettungswagen|^rtw$/i,   veh: /^(RTW|Rettungswagen)/i },
+        { req: /notarzt|^nef$/i,         veh: /^(NEF|NAW|Notarzt)/i },
+        { req: /krankentransport|ktw/i,  veh: /^(KTW|Krankentransport)/i },
+        { req: /elw ?1|einsatzleit/i,    veh: /^ELW ?1/i },
+        { req: /elw ?2/i,                veh: /^ELW ?2/i },
+        { req: /gw-?öl|gw-?oel/i,        veh: /^GW-?(Öl|Oel)/i },
+        { req: /gw-?atemschutz/i,        veh: /^GW-?Atemschutz/i },
+        { req: /gw-?messtechnik/i,       veh: /^GW-?Messtechnik/i },
+        { req: /gw-?gefahrgut/i,         veh: /^GW-?Gefahrgut/i },
+        { req: /schlauch/i,              veh: /^(GW-?Schlauch|SW)/i },
+        { req: /streifenwagen|fustw/i,   veh: /^(Streifenwagen|FuStW)(?!.*(DGL|Dienstgruppen))/i },
+        { req: /wasserwerfer/i,      veh: /^(WaWe|Wasserwerfer)/i },
+        { req: /löschfahrzeug|loeschfahrzeug|\blf\b|hlf/i, veh: /^(LF|HLF|TLF|TSF|KLF|MLF|StLF)/i },
+    ];
+
+    // <pure>
+    const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+    const splitItems = t => t.split(/,(?![^(]*\))/).map(s => s.trim()).filter(Boolean);
+    const fold = s => s.toLowerCase().replace(/ä/g,'a').replace(/ö/g,'o').replace(/ü/g,'u').replace(/ß/g,'ss')
+        .replace(/[^a-z0-9]+/g, ' ').trim();
+
+    function parseRequired(text) {
+        text = text.replace(/\u00a0/g, ' ').replace(/\s+/g, ' ').trim();
+        text = text.split(/Fehlendes Personal/i)[0];               // Personal-Teil abschneiden
+        const colon = text.indexOf(':');
+        const list = (colon > -1 ? text.slice(colon + 1) : text).replace(/\.\s*$/, '');
+        return splitItems(list).map(item => {
+            const m = item.match(/^(\d+)\s*x?\s+(.+)$/i);
+            return m ? { missing: +m[1], name: m[2].trim() } : { missing: 1, name: item };
+        });
+    }
+
+    // Wie gut passt ein Fahrzeugtyp zu einer Anforderung? 3 = exakt, 2 = Regel, 1 = Namensähnlichkeit, 0 = nein
+    function scoreAlt(req, veh) {
+        const a = fold(req), b = fold(veh);
+        if (!a || !b) return 0;
+        if (a === b) return 3;
+        for (const r of RULES) if (r.req.test(req)) return r.veh.test(veh) ? 2 : 0;
+        if (b.startsWith(a + ' ')) return 1;                                              // "wasserwerfer" ~ "wasserwerfer 10000"
+        if (a.startsWith(b) && /^(e|er|en|n|s)$/.test(a.slice(b.length))) return 1;       // Plural: Polizeipferde ~ Polizeipferd
+        return 0;
+    }
+    const score = (req, veh) => {
+        let best = Math.max(...req.split(/\s+oder\s+/i).map(x => scoreAlt(x.trim(), veh)));
+        const inner = req.match(/\(([^()]+)\)/);                 // "Radlader (BRmG R)" -> Typ "BRmG R"
+        if (inner && fold(inner[1]) === fold(veh)) best = Math.max(best, 3);
+        return best;
+    };
+
+    // Fahrzeugtypen, die zusätzlich eine andere Anforderung erfüllen dürfen (nur mit Überschuss, nur in diese Richtung)
+    const SUBSTITUTES = [
+        { veh: /^ELW ?2/i, covers: /^ELW ?1\b/i },   // ELW 2 ersetzt ELW 1, ein ELW 1 aber keinen ELW 2
+    ];
+
+    // Fahrzeugtypen, die gleichzeitig für mehrere Anforderungen zählen (kein Entweder-oder):
+    // jedes HLF (10, 20, Schiene …) zählt sofort als LF und als RW
+    const MULTI = [
+        { veh: /^HLF/i, covers: [/^(löschfahrzeug|loeschfahrzeug|lf\b)/i, /^(rüstwagen|ruestwagen|rw\b)/i] },
+    ];
+
+    // Jedes Fahrzeug genau einer Anforderung zuordnen (beste Übereinstimmung), danach Ersatz-Regeln anwenden
+    function assign(rows, vehicles) {
+        const extra = [];
+        rows.forEach(r => { r.list = []; });
+        vehicles.forEach(v => {
+            const multi = MULTI.find(m => m.veh.test(v.name));
+            if (multi) {                                   // zählt in allen passenden Zeilen
+                let any = false;
+                rows.forEach(r => {
+                    if (multi.covers.some(rx => rx.test(r.name)) || score(r.name, v.name) > 0) { r.list.push(v); any = true; }
+                });
+                if (!any) extra.push(v);
+                return;
+            }
+            let best = -1, bs = 0;
+            rows.forEach((r, i) => { const sc = score(r.name, v.name); if (sc > bs) { bs = sc; best = i; } });
+            if (best > -1) rows[best].list.push(v); else extra.push(v);
+        });
+
+        // Bereits eingetroffene Fahrzeuge zieht das Spiel selbst ab, nur Anfahrt/Auswahl zählt hier
+        const counted = r => r.list.filter(v => v.state !== 'atSite').length;
+        SUBSTITUTES.forEach(sub => {
+            rows.forEach(target => {
+                if (!sub.covers.test(target.name)) return;
+                let need = Math.max(0, target.missing - counted(target));
+                const move = (from, v) => { from.splice(from.indexOf(v), 1); target.list.push(v); need--; };
+
+                // 1) Fahrzeuge ohne eigene Anforderung
+                extra.filter(v => v.state !== 'atSite' && sub.veh.test(v.name)).forEach(v => { if (need > 0) move(extra, v); });
+
+                // 2) Überschuss aus anderen Zeilen (über deren eigenen Bedarf hinaus)
+                rows.forEach(o => {
+                    if (o === target || need <= 0) return;
+                    let spare = counted(o) - o.missing;
+                    o.list.filter(v => v.state !== 'atSite' && sub.veh.test(v.name)).forEach(v => {
+                        if (spare > 0 && need > 0) { move(o.list, v); spare--; }
+                    });
+                });
+            });
+        });
+
+        // Zähler aus den zugeordneten Fahrzeugen bilden
+        rows.forEach(r => {
+            r.driving = r.list.filter(v => v.state === 'driving').length;
+            r.atSite  = r.list.filter(v => v.state === 'atSite').length;
+            r.sel     = r.list.filter(v => v.state === 'sel').length;
+        });
+        return extra;
+    }
+    // </pure>
+
+    // ---------- Daten (alles aus dem HTML, keine API nötig) ----------
+    const missionId = (location.pathname.match(/\/missions\/(\d+)/) || [])[1];
+
+    const looksLikeType = t => !!t && !/^[\d.,:\s]+\s*(km|m|min|h)?$/i.test(t);
+
+    // Das Spiel zeigt den Typ in Klammern hinter dem Namen: "LAPD 107 - FuStW/8 (FuStW)"
+    function typeFromRow(tr) {
+        if (!tr) return null;
+        const smalls = [...tr.querySelectorAll('small')]
+            .filter(s => !s.querySelector('a, button') && /^\(.+\)$/.test(s.textContent.trim()));
+        if (smalls.length) return smalls[0].textContent.trim().replace(/^\(|\)$/g, '').trim();
+        const td = tr.querySelector('td');
+        if (!td) return null;
+        const c = td.cloneNode(true);
+        c.querySelectorAll('.btn-group, .visible-xs, .hidden-xs, a.btn, button').forEach(e => e.remove());
+        const m = c.textContent.replace(/\s+/g, ' ').trim().match(/\(([^()]+)\)\s*$/);
+        return m ? m[1].trim() : null;
+    }
+
+    // Ist ein Element Teil der Anfahrt- oder Vor-Ort-Liste?
+    function classify(el) {
+        for (let n = el; n && n !== document.body; n = n.parentElement) {
+            const k = ((n.id || '') + ' ' + (typeof n.className === 'string' ? n.className : '')).toLowerCase();
+            if (/at_mission|atmission|on_site|onsite|vor_ort/.test(k)) return 'atSite';
+            if (/driving|on_way|onway|anfahr/.test(k)) return 'driving';
+        }
+        return null;
+    }
+
+    function domSent() {
+        const state = new Map();   // id -> {state, name}
+        document.querySelectorAll('a[href^="/vehicles/"]').forEach(a => {
+            if (a.closest('#' + BOX_ID)) return;
+            const m = a.getAttribute('href').match(/^\/vehicles\/(\d+)$/);
+            if (!m || state.has(m[1])) return;
+            const st = classify(a);
+            if (st) state.set(m[1], { state: st, name: typeFromRow(a.closest('tr')) || '?' });
+        });
+        return state;
+    }
+
+    // Typ-Nummer -> Name (LSSM-API, 24 h im localStorage gecacht)
+    const typeNames = new Map();
+    let typeNamesTry = 0;
+    async function loadTypeNames() {
+        if (typeNames.size || Date.now() - typeNamesTry < 60000) return;
+        typeNamesTry = Date.now();
+        const KEY = 'lssAbgleichTypes';
+        try {
+            const c = JSON.parse(localStorage.getItem(KEY) || 'null');
+            if (c && c.data && Date.now() - c.t < 864e5) {
+                Object.entries(c.data).forEach(([id, n]) => typeNames.set(id, n));
+                if (typeNames.size) return;
+            }
+        } catch (e) { /* ignorieren */ }
+        try {
+            const res = await Promise.race([
+                fetch('https://api.lss-manager.de/' + LANG + '/vehicles'),
+                new Promise((_, rej) => setTimeout(() => rej(new Error('Timeout')), 6000)),
+            ]);
+            const data = await res.json();
+            const flat = {};
+            Object.entries(data).forEach(([id, v]) => { if (v && v.caption) flat[id] = v.caption; });
+            Object.entries(flat).forEach(([id, n]) => typeNames.set(id, n));
+            try { localStorage.setItem(KEY, JSON.stringify({ t: Date.now(), data: flat })); } catch (e) { /* ignorieren */ }
+        } catch (e) {
+            console.warn('[LSS-Abgleich] Typnamen nicht ladbar:', e);
+        }
+    }
+
+    // Angehakte, noch nicht alarmierte Fahrzeuge
+    function selectedVehicles() {
+        return [...document.querySelectorAll('input.vehicle_checkbox:checked, input[type="checkbox"][name="vehicle_ids[]"]:checked')]
+            .map(cb => {
+                const tid = cb.getAttribute('vehicle_type_id');
+                const t = (tid && typeNames.get(tid)) || cb.getAttribute('vehicle_type') ||
+                    cb.getAttribute('vehicle_type_caption') || typeFromRow(cb.closest('tr'));
+                return { id: String(cb.value || ''), state: 'sel', name: looksLikeType(t) ? t : '?' };
+            });
+    }
+
+    function readRequired(source) {
+        const block = source.querySelector('[data-requirement-type="vehicles"]');
+        return parseRequired((block || source).textContent);
+    }
+
+    function collectVehicles() {
+        const out = [];
+        domSent().forEach((v, id) => out.push({ id, state: v.state, name: v.name }));
+        return out.concat(selectedVehicles());
+    }
+
+    // ---------- Rendering ----------
+    let running = false, again = false;
+
+    async function render() {
+        if (running) { again = true; return; }
+        running = true;
+        try {
+            const source = document.getElementById(SOURCE_ID);
+            if (!source) return;
+            let box = document.getElementById(BOX_ID);
+            if (!box) {
+                box = document.createElement('div');
+                box.id = BOX_ID;
+                source.insertAdjacentElement('afterend', box);
+            }
+
+            const required = readRequired(source);
+            const hadNames = typeNames.size;
+            loadTypeNames().then(() => { if (!hadNames && typeNames.size) schedule(); });   // nicht darauf warten
+            const vehicles = collectVehicles();
+
+            const rows = required.map(r => ({ name: r.name, missing: r.missing, driving: 0, atSite: 0, sel: 0 }));
+            assign(rows, vehicles);
+            const count = st => vehicles.filter(v => v.state === st).length;
+            const totalMissing = rows.reduce((s, r) => s + r.missing, 0);
+
+            // Zwei Spalten nebeneinander (bei wenigen Zeilen oder schmalem Fenster eine)
+            const split = rows.length >= 4 ? Math.ceil(rows.length / 2) : rows.length;
+            const unnamed = vehicles.filter(v => v.state === 'sel' && v.name === '?').length;
+            const ticked = document.querySelectorAll('input[type="checkbox"]:checked').length;
+            const warn = unnamed
+                ? `⚠ ${unnamed} angehakte Fahrzeuge ohne Typnamen (Namensliste von api.lss-manager.de nicht geladen)`
+                : (ticked && !count('sel') ? `⚠ ${ticked} Haken gesetzt, aber keine Fahrzeug-Checkbox erkannt` : '');
+            // Wie im LSSM: "Fehlt" = Spieltext (Eingetroffene sind dort schon abgezogen, Anfahrende nicht).
+            // Rest = Fehlt - Anfahrt - Gewählt
+            const restOf = r => Math.max(0, r.missing - r.driving - r.sel);
+            const uniq = new Set();
+            rows.forEach(r => r.list.forEach(v => uniq.add(v)));          // ein HLF in LF- und RW-Zeile zählt in der Summe einmal
+            const sum = st => [...uniq].filter(v => v.state === st).length;
+            const restTotal = rows.reduce((t, r) => t + restOf(r), 0);
+            const tableHtml = list => `
+                <table>
+                    <thead><tr><th>Fahrzeug</th><th class="n">Fehlt</th><th class="n">Anfahrt</th><th class="n">Vor Ort</th><th class="n">Gewählt</th><th class="n">Rest</th></tr></thead>
+                    <tbody>
+                        ${list.map(r => `<tr>
+                            <td>${esc(r.name)}</td>
+                            <td class="n miss">${r.missing}</td>
+                            <td class="n">${r.driving}</td>
+                            <td class="n">${r.atSite}</td>
+                            <td class="n ${r.sel ? 'selmark' : ''}">${r.sel}</td>
+                            <td class="n ${restOf(r) ? 'miss' : 'ok'}">${restOf(r)}</td>
+                        </tr>`).join('')}
+                    </tbody>
+                </table>`;
+
+            box.innerHTML = `
+                <style>
+                    #${BOX_ID} .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 0 16px; align-items: start; }
+                    @media (max-width: 900px) { #${BOX_ID} .cols { grid-template-columns: 1fr; } }
+                    #${BOX_ID} table { width: 100%; margin: 8px 0 0; }
+                    #${BOX_ID} th, #${BOX_ID} td { padding: 3px 8px; }
+                    #${BOX_ID} th { border-bottom: 2px solid #888; text-align: left; }
+                    #${BOX_ID} td.n, #${BOX_ID} th.n { text-align: center; width: 58px; white-space: nowrap; }
+                    #${BOX_ID} tbody tr:nth-child(odd) { background: rgba(128,128,128,.15); }
+                    #${BOX_ID} .miss { color: #d9534f; font-weight: bold; }
+                    #${BOX_ID} .ok { color: #5cb85c; font-weight: bold; }
+                    #${BOX_ID} .selmark { color: #f0ad4e; font-weight: bold; }
+                    #${BOX_ID} .warn { color: #f0ad4e; font-size: 12px; margin: 2px 0 6px; }
+                    #${BOX_ID} .ver { color: #888; font-size: 10px; text-align: right; }
+                    #${BOX_ID} .sum { margin: 6px 0 8px; padding: 4px 8px; border-top: 2px solid #888; font-weight: bold; }
+                </style>
+                ${rows.length ? `
+                <div class="cols">
+                    <div>${tableHtml(rows.slice(0, split))}</div>
+                    ${split < rows.length ? `<div>${tableHtml(rows.slice(split))}</div>` : ''}
+                </div>
+                <div class="sum">Summe: <span class="miss">${totalMissing} fehlen</span> · ${sum('driving')} Anfahrt · ${sum('atSite')} vor Ort · ${sum('sel')} gewählt · <span class="${restTotal ? 'miss' : 'ok'}">Rest ${restTotal}</span></div>`
+                : `<div class="ok">Nichts fehlt mehr.</div>`}
+                ${warn ? `<div class="warn">${esc(warn)}</div>` : ''}
+            `;
+            if (HIDE_ORIGINAL) source.style.display = 'none';
+        } catch (e) {
+            console.error('[LSS-Abgleich] Fehler beim Aufbau', e);
+        } finally {
+            running = false;
+            if (again) { again = false; schedule(); }
+        }
+    }
+
+    // ---------- Auslöser ----------
+    // Kein MutationObserver: Spiel und LSSM ändern das DOM ständig, ein verzögerter Neuaufbau käme nie dran.
+    // Stattdessen alle 500 ms eine Kennung (Haken + Anforderungstext + Fahrzeuglinks) vergleichen.
+    function signature() {
+        const src = document.getElementById(SOURCE_ID);
+        return [
+            document.querySelectorAll('input[type="checkbox"]:checked').length,
+            src ? src.textContent : '',
+            document.querySelectorAll('a[href^="/vehicles/"]').length,
+        ].join('|');
+    }
+
+    let timer = null;
+    // Feste Verzögerung (kein Zurücksetzen bei weiteren Änderungen)
+    function schedule() { if (!timer) timer = setTimeout(() => { timer = null; render(); }, 250); }
+
+    document.addEventListener('change', e => {
+        if (e.target && e.target.matches && e.target.matches('input[type="checkbox"]')) schedule();
+    }, true);
+    document.addEventListener('click', e => {
+        if (e.target && e.target.closest && e.target.closest('#' + BOX_ID)) return;
+        schedule();
+    }, true);
+
+    let lastSig = signature();
+    setInterval(() => {
+        const sig = signature();
+        if (sig !== lastSig) { lastSig = sig; render(); }
+    }, 500);
+
+    render();
+})();
