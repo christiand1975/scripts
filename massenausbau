@@ -1,0 +1,279 @@
+// ==UserScript==
+// @name         alpha test LSS - Erweiterungen leitstellenübergreifend bauen (nur Credits, mit Kostencheck)
+// @namespace    lss-mass-extensions
+// @version      1.2.2
+// @description  Wachentyp wählen, Erweiterungen auswählen, Kosten sehen, nur bei ausreichend Credits bauen
+// @match        https://*.leitstellenspiel.de/*
+// @run-at       document-idle
+// @grant        none
+// ==/UserScript==
+
+(function () {
+    'use strict';
+
+    if (window.top !== window.self) return;
+    if (document.getElementById('mx-open-btn')) return;
+    console.log('[LSS Massenausbau] Script geladen');
+
+    const TYPE_NAMES = {
+        0: 'Feuerwache', 1: 'Feuerwehrschule', 2: 'Rettungswache', 3: 'Rettungsschule',
+        4: 'Krankenhaus', 5: 'Rettungshubschrauber-Station', 6: 'Polizeiwache',
+        7: 'Leitstelle', 8: 'Polizeischule', 9: 'THW', 10: 'THW Bundesschule',
+        11: 'Bereitschaftspolizei', 12: 'SEG', 13: 'Polizeihubschrauber-Station',
+        14: 'Bereitstellungsraum', 15: 'Wasserrettung', 17: 'Polizei-Sondereinheit',
+        18: 'Feuerwache (Kleinwache)', 19: 'Polizeiwache (Kleinwache)',
+        20: 'Rettungswache (Kleinwache)'
+    };
+    const typeName = t => TYPE_NAMES[t] || ('Typ ' + t);
+    const sleep = ms => new Promise(r => setTimeout(r, ms));
+    const csrf = () => { const m = document.querySelector('meta[name="csrf-token"]'); return m ? m.content : ''; };
+    const fmt = n => Number(n).toLocaleString('de-DE');
+
+    let buildings = [];
+    let scanned = [];
+    let extMap = {};
+    let credits = null;
+
+    // ---------- UI ----------
+    const btn = document.createElement('button');
+    btn.id = 'mx-open-btn';
+    btn.textContent = '🏗 Massenausbau';
+    btn.style.cssText = 'position:fixed;bottom:60px;left:10px;z-index:2147483647;padding:6px 10px;';
+    btn.className = 'btn btn-primary btn-sm';
+    (document.body || document.documentElement).appendChild(btn);
+
+    const modal = document.createElement('div');
+    modal.style.cssText = 'display:none;position:fixed;top:5%;left:50%;transform:translateX(-50%);' +
+        'width:700px;max-width:95vw;max-height:88vh;overflow:auto;background:#fff;color:#000;' +
+        'border:2px solid #444;border-radius:6px;padding:15px;z-index:2147483647;box-shadow:0 0 25px #000;';
+    modal.innerHTML =
+        '<div style="display:flex;justify-content:space-between;align-items:center">' +
+        '<h4 style="margin:0">Erweiterungen leitstellenübergreifend bauen (Credits)</h4>' +
+        '<button id="mx-close" class="btn btn-default btn-xs">✕</button></div><hr>' +
+        '<div id="mx-status">Lade Gebäude…</div>' +
+        '<div style="margin:10px 0">' +
+        '<select id="mx-type" class="form-control" style="display:inline-block;width:auto" disabled></select> ' +
+        '<button id="mx-scan" class="btn btn-info btn-sm" disabled>Erweiterungen suchen</button></div>' +
+        '<div id="mx-list"></div>' +
+        '<div id="mx-actions" style="display:none;margin-top:10px">' +
+        '<div id="mx-summary" style="padding:8px;border:1px solid #ccc;border-radius:4px;margin-bottom:8px"></div>' +
+        '<button id="mx-refresh" class="btn btn-default btn-sm">Credits aktualisieren</button> ' +
+        '<button id="mx-build" class="btn btn-success" disabled>Ausgewählte bauen</button></div>' +
+        '<pre id="mx-log" style="max-height:200px;overflow:auto;margin-top:10px;display:none"></pre>';
+    document.body.appendChild(modal);
+
+    const $ = id => modal.querySelector('#' + id);
+    const log = msg => {
+        const l = $('mx-log');
+        l.style.display = 'block';
+        l.textContent += msg + '\n';
+        l.scrollTop = l.scrollHeight;
+    };
+
+    btn.onclick = async () => {
+        modal.style.display = 'block';
+        if (!buildings.length) await loadBuildings();
+    };
+    $('mx-close').onclick = () => { modal.style.display = 'none'; };
+
+    // ---------- Credits ----------
+    async function fetchCredits() {
+        const urls = ['/api/credits', '/api/userinfo'];
+        for (const url of urls) {
+            try {
+                const j = await (await fetch(url, { credentials: 'same-origin' })).json();
+                const v = j.credits_user_current ?? j.user_credits ?? j.credits_user ?? j.credits;
+                if (typeof v === 'number' && !isNaN(v)) return v;
+            } catch (e) { /* nächste Quelle */ }
+        }
+        return null;
+    }
+
+    async function refreshCredits() {
+        credits = await fetchCredits();
+        if (credits === null) {
+            const input = prompt('Credits konnten nicht automatisch gelesen werden.\nBitte aktuellen Credit-Stand eingeben:');
+            const n = parseInt((input || '').replace(/[^\d]/g, ''), 10);
+            credits = isNaN(n) ? null : n;
+        }
+        updateSummary();
+    }
+
+    // ---------- Kosten parsen ----------
+    function parseCost(rowText, linkText) {
+        const m = (rowText || '').match(/([\d.,]+)\s*Credits/i) || (linkText || '').match(/([\d.,]+)/);
+        if (!m) return NaN;
+        const n = parseInt(m[1].replace(/[^\d]/g, ''), 10);
+        return isNaN(n) ? NaN : n;
+    }
+
+    // ---------- Gebäude laden ----------
+    async function loadBuildings() {
+        $('mx-status').textContent = 'Lade alle Gebäude…';
+        buildings = await (await fetch('/api/buildings')).json();
+        const counts = {};
+        buildings.forEach(b => { counts[b.building_type] = (counts[b.building_type] || 0) + 1; });
+
+        const sel = $('mx-type');
+        sel.innerHTML = Object.keys(counts).map(Number).sort((a, b) => a - b)
+            .map(t => '<option value="' + t + '">' + typeName(t) + ' (' + counts[t] + ')</option>').join('');
+        sel.disabled = false;
+        $('mx-scan').disabled = false;
+        $('mx-status').textContent = buildings.length + ' Gebäude aus allen Leitstellen geladen.';
+    }
+
+    // ---------- Scan ----------
+    $('mx-scan').onclick = async () => {
+        const type = Number($('mx-type').value);
+        const targets = buildings.filter(b => b.building_type === type);
+        scanned = [];
+        extMap = {};
+        $('mx-list').innerHTML = '';
+        $('mx-actions').style.display = 'none';
+        $('mx-scan').disabled = true;
+
+        for (let i = 0; i < targets.length; i++) {
+            const b = targets[i];
+            $('mx-status').textContent = 'Scanne ' + (i + 1) + '/' + targets.length + ': ' + b.caption;
+            try {
+                const html = await (await fetch('/buildings/' + b.id)).text();
+                const doc = new DOMParser().parseFromString(html, 'text/html');
+                const links = [];
+                doc.querySelectorAll('a[href*="/extension/credits/"]').forEach(a => {
+                    const m = a.getAttribute('href').match(/\/buildings\/\d+\/extension\/credits\/(\d+)/);
+                    if (!m) return;
+                    const row = a.closest('tr');
+                    const firstTd = row ? row.querySelector('td') : null;
+                    const name = firstTd ? firstTd.textContent.trim().replace(/\s+/g, ' ') : ('Erweiterung ' + m[1]);
+                    const linkText = a.textContent.trim().replace(/\s+/g, ' ');
+                    const rowText = row ? row.textContent.replace(/\s+/g, ' ') : '';
+                    links.push({
+                        extId: m[1],
+                        name: name,
+                        cost: parseCost(rowText, linkText),
+                        href: a.getAttribute('href')
+                    });
+                });
+                scanned.push({ b: b, links: links });
+                links.forEach(l => {
+                    if (!extMap[l.extId]) extMap[l.extId] = Object.assign({}, l, { count: 0 });
+                    extMap[l.extId].count++;
+                });
+            } catch (e) { log('Fehler beim Scan von ' + b.caption + ': ' + e); }
+            await sleep(250);
+        }
+        $('mx-scan').disabled = false;
+        $('mx-status').textContent = 'Scan fertig: ' + scanned.length + ' Gebäude geprüft.';
+        renderList();
+        await refreshCredits();
+    };
+
+    function renderList() {
+        const items = Object.entries(extMap).sort((a, b) => a[1].name.localeCompare(b[1].name));
+        if (!items.length) {
+            $('mx-list').innerHTML = '<i>Keine mit Credits baubaren Erweiterungen gefunden (evtl. alles gebaut).</i>';
+            $('mx-actions').style.display = 'none';
+            return;
+        }
+        $('mx-list').innerHTML = items.map(([k, v]) => {
+            const price = isNaN(v.cost)
+                ? '<span style="color:red">Preis unbekannt</span>'
+                : fmt(v.cost) + ' Credits';
+            const extra = isNaN(v.cost) ? '' : ', gesamt ' + fmt(v.cost * v.count) + ' Credits';
+            return '<div><label><input type="checkbox" class="mx-ext" value="' + k + '"> ' +
+                '<b>' + v.name + '</b> – ' + price +
+                ' <small>(fehlt in ' + v.count + ' Gebäuden' + extra + ')</small></label></div>';
+        }).join('');
+        modal.querySelectorAll('.mx-ext').forEach(c => { c.onchange = updateSummary; });
+        $('mx-actions').style.display = 'block';
+        updateSummary();
+    }
+
+    // ---------- Jobs & Summe ----------
+    function selectedJobs() {
+        const ids = [...modal.querySelectorAll('.mx-ext:checked')].map(c => c.value);
+        const jobs = [];
+        scanned.forEach(s => s.links.forEach(l => {
+            if (ids.includes(l.extId)) jobs.push({ b: s.b, l: l });
+        }));
+        return jobs;
+    }
+
+    function updateSummary() {
+        const jobs = selectedJobs();
+        const unknown = jobs.some(j => isNaN(j.l.cost));
+        const total = jobs.reduce((s, j) => s + (isNaN(j.l.cost) ? 0 : j.l.cost), 0);
+        const buildingsCount = new Set(jobs.map(j => j.b.id)).size;
+        const creditsTxt = credits === null ? '<span style="color:red">unbekannt</span>' : fmt(credits) + ' Credits';
+
+        let state = '';
+        let canBuild = false;
+        if (!jobs.length) {
+            state = 'Nichts ausgewählt.';
+        } else if (unknown) {
+            state = '<b style="color:red">⚠ Für mindestens eine Erweiterung ist der Preis unbekannt – Bauen gesperrt.</b>';
+        } else if (credits === null) {
+            state = '<b style="color:red">⚠ Credit-Stand unbekannt – Bauen gesperrt. „Credits aktualisieren“ klicken.</b>';
+        } else if (total > credits) {
+            state = '<b style="color:red">✖ Zu wenig Credits – es fehlen ' + fmt(total - credits) + ' Credits.</b>';
+        } else {
+            state = '<b style="color:green">✔ Ausreichend Credits – danach bleiben ' + fmt(credits - total) + ' übrig.</b>';
+            canBuild = true;
+        }
+
+        $('mx-summary').innerHTML =
+            'Ausbauten: <b>' + jobs.length + '</b> in <b>' + buildingsCount + '</b> Gebäuden<br>' +
+            'Gesamtkosten: <b>' + fmt(total) + ' Credits</b><br>' +
+            'Dein Guthaben: <b>' + creditsTxt + '</b><br>' + state;
+        $('mx-build').disabled = !canBuild;
+    }
+
+    $('mx-refresh').onclick = refreshCredits;
+
+    // ---------- Bauen ----------
+    $('mx-build').onclick = async () => {
+        await refreshCredits();
+        const jobs = selectedJobs();
+        if (!jobs.length) { alert('Nichts ausgewählt.'); return; }
+        if (jobs.some(j => isNaN(j.l.cost)) || credits === null) { alert('Preis oder Credit-Stand unbekannt.'); return; }
+
+        const total = jobs.reduce((s, j) => s + j.l.cost, 0);
+        if (total > credits) { alert('Zu wenig Credits! Benötigt: ' + fmt(total) + ', vorhanden: ' + fmt(credits) + '.'); return; }
+        if (!confirm(jobs.length + ' Ausbauten in ' + new Set(jobs.map(j => j.b.id)).size +
+            ' Gebäuden für ' + fmt(total) + ' Credits starten?')) return;
+
+        $('mx-build').disabled = true;
+        let ok = 0, fail = 0, remaining = credits;
+        for (let i = 0; i < jobs.length; i++) {
+            const b = jobs[i].b;
+            const l = jobs[i].l;
+            if (l.cost > remaining) {
+                log('⏹ Abbruch: nicht genug Credits für ' + b.caption + ': ' + l.name);
+                fail += jobs.length - i;
+                break;
+            }
+            $('mx-status').textContent = 'Baue ' + (i + 1) + '/' + jobs.length + '…';
+            try {
+                const res = await fetch(l.href, {
+                    method: 'POST',
+                    credentials: 'same-origin',
+                    headers: { 'X-CSRF-Token': csrf(), 'X-Requested-With': 'XMLHttpRequest' }
+                });
+                if (res.ok) {
+                    ok++;
+                    remaining -= l.cost;
+                    log('✔ ' + b.caption + ': ' + l.name + ' (' + fmt(l.cost) + ' Credits)');
+                } else {
+                    fail++;
+                    log('✖ ' + b.caption + ': ' + l.name + ' (HTTP ' + res.status + ')');
+                }
+            } catch (e) {
+                fail++;
+                log('✖ ' + b.caption + ': ' + l.name + ' (' + e + ')');
+            }
+            await sleep(500);
+        }
+        $('mx-status').textContent = 'Fertig: ' + ok + ' gestartet, ' + fail + ' fehlgeschlagen/übersprungen.';
+        await refreshCredits();
+    };
+})();
