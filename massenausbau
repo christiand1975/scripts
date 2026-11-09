@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         alpha test LSS - Massenausbau Erweiterungen (Credits, Leitstellenfilter)
 // @namespace    lss-mass-extensions
-// @version      1.4.1
+// @version      1.4.3
 // @description  Leitstellen und Wachentyp wählen, Erweiterungen auswählen, Kosten sehen, nur bei ausreichend Credits bauen
 // @match        https://*.leitstellenspiel.de/*
 // @run-at       document-end
@@ -22,46 +22,73 @@
         const oldModal = document.getElementById('mx-modal');
         if (oldModal) oldModal.remove();
 
-        // ---------- Button ZUERST erzeugen ----------        // Unsichtbarer Auslöser (wird NICHT in die Seite eingefügt)
+        // ---------- Button ZUERST erzeugen ----------
+        // Auslöser (nur als Fallback sichtbar)
         const btn = document.createElement('button');
         btn.id = 'mx-open-btn';
 
-        // Eintrag im Profilmenü unter "Notizen"
+        function findNotesLink() {
+            const links = document.querySelectorAll('a');
+            for (let i = 0; i < links.length; i++) {
+                const x = links[i];
+                if (x.closest('#mx-menu-entry')) continue;
+                const h = x.getAttribute('href') || '';
+                const t = (x.textContent || '').replace(/\s+/g, ' ').trim();
+                if (/^\/notes?(\/|\?|$)/.test(h) || /^Notizen?$/i.test(t)) return x;
+            }
+            return null;
+        }
+
         function addMenuEntry() {
             if (document.getElementById('mx-menu-entry')) return true;
-            let menu = document.querySelector('ul[aria-labelledby="menu_profile"]');
-            if (!menu) {
-                const trigger = document.getElementById('menu_profile');
-                if (trigger && trigger.parentNode) menu = trigger.parentNode.querySelector('ul.dropdown-menu');
+            const notes = findNotesLink();
+            if (!notes) return false;
+            const li = notes.closest('li');
+            let entry;
+            if (li) {
+                entry = document.createElement('li');
+                entry.className = li.className;
+                entry.setAttribute('role', 'presentation');
+                const a = document.createElement('a');
+                a.href = '#';
+                a.className = notes.className;
+                a.textContent = '🏗 Massenausbau';
+                a.onclick = function (e) { e.preventDefault(); e.stopPropagation(); btn.click(); };
+                entry.appendChild(a);
+                entry.id = 'mx-menu-entry';
+                li.parentNode.insertBefore(entry, li.nextSibling);
+            } else {
+                entry = document.createElement('a');
+                entry.id = 'mx-menu-entry';
+                entry.href = '#';
+                entry.className = notes.className;
+                entry.textContent = '🏗 Massenausbau';
+                entry.onclick = function (e) { e.preventDefault(); e.stopPropagation(); btn.click(); };
+                notes.parentNode.insertBefore(entry, notes.nextSibling);
             }
-            if (!menu) return false;
-
-            const li = document.createElement('li');
-            li.id = 'mx-menu-entry';
-            li.setAttribute('role', 'presentation');
-            const a = document.createElement('a');
-            a.href = '#';
-            a.textContent = '🏗 Massenausbau';
-            a.onclick = function (e) { e.preventDefault(); btn.click(); };
-            li.appendChild(a);
-
-            let ref = null;
-            menu.querySelectorAll('a').forEach(function (x) {
-                const h = x.getAttribute('href') || '';
-                if (!ref && (h.indexOf('/note') === 0 || /notiz/i.test(x.textContent))) ref = x.closest('li');
-            });
-            if (ref && ref.parentNode === menu) menu.insertBefore(li, ref.nextSibling);
-            else menu.appendChild(li);
             return true;
         }
-        if (!addMenuEntry()) {
-            let tries = 0;
-            const iv = setInterval(function () {
-                tries++;
-                if (addMenuEntry() || tries > 20) clearInterval(iv);
-            }, 500);
-        }
-        console.log('[LSS Massenausbau] Menüeintrag-Logik gestartet (v1.4.1)');
+
+        addMenuEntry();
+        let pending = false;
+        new MutationObserver(function () {
+            if (pending) return;
+            pending = true;
+            setTimeout(function () { pending = false; addMenuEntry(); }, 300);
+        }).observe(document.body, { childList: true, subtree: true });
+
+        // Fallback: nur auf der Hauptseite, nur wenn kein Menüeintrag gefunden wurde
+        setTimeout(function () {
+            if (document.getElementById('mx-menu-entry')) return;
+            if (location.pathname !== '/') return;
+            btn.textContent = '🏗 Massenausbau';
+            btn.style.cssText = 'position:fixed;right:10px;bottom:80px;z-index:2147483647;padding:10px 14px;' +
+                'background:#337ab7;color:#fff;border:0;border-radius:6px;font-size:16px;' +
+                'box-shadow:0 2px 8px rgba(0,0,0,.5);';
+            document.body.appendChild(btn);
+            console.log('[LSS Massenausbau] Notizen-Link nicht gefunden, Fallback-Button aktiv');
+        }, 12000);
+        console.log('[LSS Massenausbau] Menüeintrag-Logik gestartet (v1.4.3)');
 
         let modal = null;
         let initError = null;
