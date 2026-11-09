@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         alpha test LSS - Massenausbau Erweiterungen (Credits, Leitstellenfilter)
 // @namespace    lss-mass-extensions
-// @version      1.4.4
+// @version      1.5.0
 // @description  Leitstellen und Wachentyp wählen, Erweiterungen auswählen, Kosten sehen, nur bei ausreichend Credits bauen
 // @match        https://*.leitstellenspiel.de/*
 // @run-at       document-end
@@ -16,13 +16,13 @@
     function start() {
         if (!document.body) { setTimeout(start, 300); return; }
 
-        // Alten Button (ältere Script-Versionen) entfernen
+        // Reste älterer Script-Versionen entfernen
         const old = document.getElementById('mx-open-btn');
         if (old) old.remove();
         const oldModal = document.getElementById('mx-modal');
+        if (oldModal) oldModal.remove();
         document.querySelectorAll('.mx-menu-entry, #mx-menu-entry').forEach(function (n) { n.remove(); });
 
-        // ---------- Button ZUERST erzeugen ----------
         // Auslöser (nur als Fallback sichtbar)
         const btn = document.createElement('button');
         btn.id = 'mx-open-btn';
@@ -58,7 +58,7 @@
                 const li = notes.closest('li');
                 const anchor = li || notes;
                 const next = anchor.nextElementSibling;
-                if (next && next.classList.contains('mx-menu-entry')) return;   // hier schon vorhanden
+                if (next && next.classList.contains('mx-menu-entry')) return;
 
                 let entry;
                 if (li) {
@@ -102,7 +102,7 @@
             document.body.appendChild(btn);
             console.log('[LSS Massenausbau] Notizen-Link nicht gefunden, Fallback-Button aktiv');
         }, 12000);
-        console.log('[LSS Massenausbau] Menüeintrag-Logik gestartet (v1.4.4)');
+        console.log('[LSS Massenausbau] Menüeintrag-Logik gestartet (v1.5.0)');
 
         let modal = null;
         let initError = null;
@@ -142,11 +142,71 @@
                 return null;
             };
 
+            // ---------- Einstellungen für den Scan ----------
+            const CONCURRENCY = 4;                 // gleichzeitige Requests (bei HTTP 429 im Log auf 2-3 senken)
+            const CACHE_TTL = 15 * 60 * 1000;      // Scan-Ergebnisse 15 Minuten wiederverwenden
+            const CACHE_KEY = 'mx-scan-cache-v1';
+
             let buildings = [];
             let scanned = [];
             let scannedLs = {};
             let lsList = [];
             let credits = null;
+            let scanning = false;
+            let scanAbort = false;
+
+            // ---------- Cache ----------
+            let cache = {};
+            try {
+                cache = JSON.parse(localStorage.getItem(CACHE_KEY) || '{}');
+                const now = Date.now();
+                Object.keys(cache).forEach(function (k) {
+                    if (!cache[k] || now - cache[k].t > CACHE_TTL) delete cache[k];
+                });
+            } catch (e) { cache = {}; }
+            function saveCache() {
+                try { localStorage.setItem(CACHE_KEY, JSON.stringify(cache)); } catch (e) { /* voll/gesperrt: egal */ }
+            }
+            // JSON macht aus NaN ein null -> wieder zu NaN, sonst würde ein unbekannter Preis als 0 gelten
+            function normLink(l) {
+                return {
+                    extId: l.extId,
+                    name: l.name,
+                    cost: (l.cost === null || l.cost === undefined) ? NaN : l.cost,
+                    href: l.href
+                };
+            }
+
+            // ---------- Request mit Wiederholung bei Überlastung ----------
+            async function fetchRetry(url, opts, retry5xx) {
+                let lastStatus = 0;
+                for (let i = 0; i < 4; i++) {
+                    const res = await fetch(url, opts);
+                    lastStatus = res.status;
+                    if (res.status === 429 || (retry5xx && res.status >= 500)) {
+                        const ra = parseInt(res.headers.get('Retry-After') || '', 10);
+                        await sleep((isNaN(ra) ? 1000 * (i + 1) : ra * 1000) + Math.random() * 300);
+                        continue;
+                    }
+                    return res;
+                }
+                throw new Error('HTTP ' + lastStatus + ' (zu viele Versuche)');
+            }
+
+            // ---------- Parallel-Ausführung mit Limit ----------
+            async function runPool(items, limit, worker) {
+                let idx = 0;
+                const runners = [];
+                for (let k = 0; k < limit; k++) {
+                    runners.push((async function () {
+                        while (idx < items.length && !scanAbort) {
+                            const my = idx++;
+                            await worker(items[my], my);
+                        }
+                    })());
+                }
+                await Promise.all(runners);
+            }
 
             function lsKey(b) {
                 if (b.leitstelle_building_id !== null && b.leitstelle_building_id !== undefined) return String(b.leitstelle_building_id);
@@ -172,7 +232,8 @@
                 '<div id="mx-ls" style="max-height:160px;overflow:auto;margin-top:6px"></div></div>' +
                 '<div style="margin:10px 0">' +
                 '<select id="mx-type" class="form-control" style="display:inline-block;width:auto" disabled></select> ' +
-                '<button id="mx-scan" class="btn btn-info btn-sm" disabled>Erweiterungen suchen</button></div>' +
+                '<button id="mx-scan" class="btn btn-info btn-sm" disabled>Erweiterungen suchen</button> ' +
+                '<label style="font-weight:normal;margin-left:8px"><input type="checkbox" id="mx-fresh"> Cache ignorieren</label></div>' +
                 '<div id="mx-hint" style="color:#b94a00;margin-bottom:6px"></div>' +
                 '<div id="mx-list"></div>' +
                 '<div id="mx-actions" style="display:none;margin-top:10px">' +
@@ -301,46 +362,98 @@
                 $('mx-status').textContent = buildings.length + ' Gebäude aus ' + lsList.length + ' Leitstellen-Gruppen geladen.';
             }
 
-            // ---------- Scan ----------
-            $('mx-scan').onclick = async () => {
+            // ---------- Gebäudeseite auswerten ----------
+            function parsePage(html, b) {
+                const doc = new DOMParser().parseFromString(html, 'text/html');
+                const links = [];
+                const seen = {};
+                doc.querySelectorAll('a[href*="/credits"]').forEach(function (a) {
+                    const href = a.getAttribute('href') || '';
+                    if (href.indexOf('/buildings/' + b.id + '/') === -1) return;
+                    const m = href.match(/\/buildings\/\d+\/(?:extension|expand_do|specialization)[^?]*\/credits\/?([^?\s]*)/);
+                    if (!m) { log('Unbekanntes Credit-Link-Format: ' + href); return; }
+                    const extId = m[1] || href;
+                    if (seen[extId]) return;
+                    seen[extId] = true;
+                    const row = a.closest('tr');
+                    const firstTd = row ? row.querySelector('td') : null;
+                    const name = firstTd ? firstTd.textContent.trim().replace(/\s+/g, ' ') : ('Erweiterung ' + extId);
+                    const linkText = a.textContent.trim().replace(/\s+/g, ' ');
+                    const rowText = row ? row.textContent.replace(/\s+/g, ' ') : '';
+                    links.push({ extId: extId, name: name, cost: parseCost(rowText, linkText), href: href });
+                });
+                return links;
+            }
+
+            // ---------- Scan (parallel, mit Cache und Abbruch) ----------
+            $('mx-scan').onclick = async function () {
+                if (scanning) {
+                    scanAbort = true;
+                    $('mx-scan').textContent = 'Breche ab…';
+                    return;
+                }
                 const type = Number($('mx-type').value);
                 const keys = selectedLsKeys();
                 const targets = buildings.filter(b => b.building_type === type && keys.indexOf(lsKey(b)) !== -1);
                 if (!targets.length) { alert('Keine Gebäude für diese Auswahl.'); return; }
+                const fresh = $('mx-fresh').checked;
 
+                scanning = true;
+                scanAbort = false;
                 scanned = [];
                 scannedLs = {};
-                keys.forEach(k => { scannedLs[k] = true; });
                 $('mx-list').innerHTML = '';
+                $('mx-hint').textContent = '';
                 $('mx-actions').style.display = 'none';
-                $('mx-scan').disabled = true;
+                $('mx-scan').textContent = 'Abbrechen';
+                $('mx-type').disabled = true;
 
-                for (let i = 0; i < targets.length; i++) {
-                    const b = targets[i];
-                    $('mx-status').textContent = 'Scanne ' + (i + 1) + '/' + targets.length + ': ' + b.caption;
-                    try {
-                        const html = await (await fetch('/buildings/' + b.id, { credentials: 'same-origin' })).text();
-                        const doc = new DOMParser().parseFromString(html, 'text/html');
-                        const links = [];
-                        doc.querySelectorAll('a[href*="/credits"]').forEach(a => {
-                            const href = a.getAttribute('href') || '';
-                            if (href.indexOf('/buildings/' + b.id + '/') === -1) return;
-                            const m = href.match(/\/buildings\/\d+\/(?:extension|expand_do|specialization)[^?]*\/credits\/?([^?\s]*)/);
-                            if (!m) { log('Unbekanntes Credit-Link-Format: ' + href); return; }
-                            m[1] = m[1] || href;
-                            const row = a.closest('tr');
-                            const firstTd = row ? row.querySelector('td') : null;
-                            const name = firstTd ? firstTd.textContent.trim().replace(/\s+/g, ' ') : ('Erweiterung ' + m[1]);
-                            const linkText = a.textContent.trim().replace(/\s+/g, ' ');
-                            const rowText = row ? row.textContent.replace(/\s+/g, ' ') : '';
-                            links.push({ extId: m[1], name: name, cost: parseCost(rowText, linkText), href: a.getAttribute('href') });
-                        });
-                        scanned.push({ b: b, links: links });
-                    } catch (e) { log('Fehler beim Scan von ' + b.caption + ': ' + e); }
-                    await sleep(250);
+                const results = {};
+                let done = 0, cached = 0, errors = 0;
+                const t0 = Date.now();
+
+                await runPool(targets, CONCURRENCY, async function (b) {
+                    const entry = cache[b.id];
+                    if (!fresh && entry && Date.now() - entry.t < CACHE_TTL) {
+                        results[b.id] = entry.links.map(normLink);
+                        cached++;
+                    } else {
+                        try {
+                            const res = await fetchRetry('/buildings/' + b.id, { credentials: 'same-origin' }, true);
+                            if (!res.ok) throw new Error('HTTP ' + res.status);
+                            const links = parsePage(await res.text(), b);
+                            results[b.id] = links;
+                            cache[b.id] = { t: Date.now(), links: links };
+                        } catch (e) {
+                            errors++;
+                            log('Fehler beim Scan von ' + b.caption + ': ' + e);
+                        }
+                        await sleep(60);
+                    }
+                    done++;
+                    $('mx-status').textContent = 'Scanne ' + done + '/' + targets.length +
+                        (cached ? ' (' + cached + ' aus Cache)' : '') + '…';
+                });
+
+                saveCache();
+                targets.forEach(function (b) {
+                    if (results[b.id]) scanned.push({ b: b, links: results[b.id] });
+                });
+                const aborted = scanAbort;
+                if (!aborted) keys.forEach(function (k) { scannedLs[k] = true; });
+
+                scanning = false;
+                scanAbort = false;
+                $('mx-scan').textContent = 'Erweiterungen suchen';
+                rebuildTypeOptions();
+
+                const secs = Math.round((Date.now() - t0) / 1000);
+                if (aborted && !scanned.length) {
+                    $('mx-status').textContent = 'Scan abgebrochen.';
+                    return;
                 }
-                $('mx-scan').disabled = false;
-                $('mx-status').textContent = 'Scan fertig: ' + scanned.length + ' Gebäude geprüft.';
+                $('mx-status').textContent = (aborted ? 'Scan abgebrochen: ' : 'Scan fertig: ') + scanned.length +
+                    ' Gebäude in ' + secs + ' s (' + cached + ' aus Cache' + (errors ? ', ' + errors + ' Fehler' : '') + ').';
                 renderList();
                 updateHint();
                 await refreshCredits();
@@ -434,44 +547,4 @@
                 const total = jobs.reduce((s, j) => s + j.l.cost, 0);
                 if (total > credits) { alert('Zu wenig Credits! Benötigt: ' + fmt(total) + ', vorhanden: ' + fmt(credits) + '.'); return; }
                 if (!confirm(jobs.length + ' Ausbauten in ' + new Set(jobs.map(j => j.b.id)).size +
-                    ' Gebäuden (' + new Set(jobs.map(j => lsKey(j.b))).size + ' Leitstellen) für ' + fmt(total) + ' Credits starten?')) return;
-
-                $('mx-build').disabled = true;
-                let ok = 0, fail = 0, remaining = credits;
-                for (let i = 0; i < jobs.length; i++) {
-                    const b = jobs[i].b;
-                    const l = jobs[i].l;
-                    if (l.cost > remaining) {
-                        log('⏹ Abbruch: nicht genug Credits für ' + b.caption + ': ' + l.name);
-                        fail += jobs.length - i;
-                        break;
-                    }
-                    $('mx-status').textContent = 'Baue ' + (i + 1) + '/' + jobs.length + '…';
-                    try {
-                        const res = await fetch(l.href, {
-                            method: 'POST',
-                            credentials: 'same-origin',
-                            headers: { 'X-CSRF-Token': csrf(), 'X-Requested-With': 'XMLHttpRequest' }
-                        });
-                        if (res.ok) {
-                            ok++;
-                            remaining -= l.cost;
-                            log('✔ ' + b.caption + ': ' + l.name + ' (' + fmt(l.cost) + ' Credits)');
-                        } else {
-                            fail++;
-                            log('✖ ' + b.caption + ': ' + l.name + ' (HTTP ' + res.status + ')');
-                        }
-                    } catch (e) {
-                        fail++;
-                        log('✖ ' + b.caption + ': ' + l.name + ' (' + e + ')');
-                    }
-                    await sleep(500);
-                }
-                $('mx-status').textContent = 'Fertig: ' + ok + ' gestartet, ' + fail + ' fehlgeschlagen/übersprungen.';
-                await refreshCredits();
-            };
-        }
-    }
-
-    start();
-})();
+                    ' Gebäuden (' + new
