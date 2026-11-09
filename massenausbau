@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         alpha test LSS - Massenausbau Erweiterungen (Credits, Leitstellenfilter)
 // @namespace    lss-mass-extensions
-// @version      1.5.0
-// @description  Leitstellen und Wachentyp wählen, Erweiterungen auswählen, Kosten sehen, nur bei ausreichend Credits bauen
+// @version      1.6.0
+// @description  Erweiterungen leitstellenübergreifend bauen (Credits) und einsatzbereit setzen
 // @match        https://*.leitstellenspiel.de/*
 // @run-at       document-end
 // @grant        none
@@ -102,7 +102,7 @@
             document.body.appendChild(btn);
             console.log('[LSS Massenausbau] Notizen-Link nicht gefunden, Fallback-Button aktiv');
         }, 12000);
-        console.log('[LSS Massenausbau] Menüeintrag-Logik gestartet (v1.5.0)');
+        console.log('[LSS Massenausbau] Menüeintrag-Logik gestartet (v1.6.0)');
 
         let modal = null;
         let initError = null;
@@ -134,6 +134,7 @@
             const sleep = ms => new Promise(r => setTimeout(r, ms));
             const csrf = () => { const m = document.querySelector('meta[name="csrf-token"]'); return m ? m.content : ''; };
             const fmt = n => Number(n).toLocaleString('de-DE');
+            const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
             const firstNum = function () {
                 for (let i = 0; i < arguments.length; i++) {
                     const v = arguments[i];
@@ -145,15 +146,16 @@
             // ---------- Einstellungen für den Scan ----------
             const CONCURRENCY = 4;                 // gleichzeitige Requests (bei HTTP 429 im Log auf 2-3 senken)
             const CACHE_TTL = 15 * 60 * 1000;      // Scan-Ergebnisse 15 Minuten wiederverwenden
-            const CACHE_KEY = 'mx-scan-cache-v1';
+            const CACHE_KEY = 'mx-scan-cache-v2';
 
             let buildings = [];
-            let scanned = [];
+            let scanned = [];                      // [{b, links, acts}]
             let scannedLs = {};
             let lsList = [];
             let credits = null;
             let scanning = false;
             let scanAbort = false;
+            let mode = 'build';                    // 'build' | 'activate'
 
             // ---------- Cache ----------
             let cache = {};
@@ -161,7 +163,7 @@
                 cache = JSON.parse(localStorage.getItem(CACHE_KEY) || '{}');
                 const now = Date.now();
                 Object.keys(cache).forEach(function (k) {
-                    if (!cache[k] || now - cache[k].t > CACHE_TTL) delete cache[k];
+                    if (!cache[k] || !cache[k].links || !cache[k].acts || now - cache[k].t > CACHE_TTL) delete cache[k];
                 });
             } catch (e) { cache = {}; }
             function saveCache() {
@@ -222,8 +224,11 @@
                 'border:2px solid #444;border-radius:6px;padding:15px;z-index:2147483647;box-shadow:0 0 25px #000;';
             modal.innerHTML =
                 '<div style="display:flex;justify-content:space-between;align-items:center">' +
-                '<h4 style="margin:0">Erweiterungen leitstellenübergreifend bauen (Credits)</h4>' +
+                '<h4 style="margin:0">Erweiterungen leitstellenübergreifend</h4>' +
                 '<button id="mx-close" class="btn btn-default btn-xs">✕</button></div><hr>' +
+                '<div style="margin-bottom:8px">' +
+                '<label style="font-weight:normal;margin-right:14px"><input type="radio" name="mx-mode" value="build" checked> Bauen (Credits)</label>' +
+                '<label style="font-weight:normal"><input type="radio" name="mx-mode" value="activate"> Einsatzbereit setzen</label></div>' +
                 '<div id="mx-status">Lade Gebäude…</div>' +
                 '<div style="margin:10px 0;padding:8px;border:1px solid #ccc;border-radius:4px">' +
                 '<b>Leitstellen</b> ' +
@@ -239,7 +244,8 @@
                 '<div id="mx-actions" style="display:none;margin-top:10px">' +
                 '<div id="mx-summary" style="padding:8px;border:1px solid #ccc;border-radius:4px;margin-bottom:8px"></div>' +
                 '<button id="mx-refresh" class="btn btn-default btn-sm">Credits aktualisieren</button> ' +
-                '<button id="mx-build" class="btn btn-success" disabled>Ausgewählte bauen</button></div>' +
+                '<button id="mx-build" class="btn btn-success" disabled>Ausgewählte bauen</button>' +
+                '<button id="mx-act" class="btn btn-success" disabled style="display:none">Ausgewählte einsatzbereit setzen</button></div>' +
                 '<pre id="mx-log" style="max-height:200px;overflow:auto;margin-top:10px;display:none"></pre>';
             document.body.appendChild(modal);
 
@@ -260,6 +266,15 @@
             };
             $('mx-close').onclick = () => { modal.style.display = 'none'; };
 
+            // ---------- Modus ----------
+            modal.querySelectorAll('input[name="mx-mode"]').forEach(function (r) {
+                r.onchange = async function () {
+                    mode = r.value;
+                    if (scanned.length) renderList();
+                    if (mode === 'build' && scanned.length && credits === null) await refreshCredits();
+                };
+            });
+
             // ---------- Leitstellenfilter ----------
             function selectedLsKeys() {
                 return Array.prototype.map.call(modal.querySelectorAll('.mx-ls:checked'), c => c.value);
@@ -268,7 +283,7 @@
             function renderLs() {
                 $('mx-ls').innerHTML = lsList.map(ls =>
                     '<div><label style="font-weight:normal"><input type="checkbox" class="mx-ls" value="' + ls.key + '" checked> ' +
-                    ls.name + ' <small>(' + ls.count + ' Gebäude)</small></label></div>'
+                    esc(ls.name) + ' <small>(' + ls.count + ' Gebäude)</small></label></div>'
                 ).join('');
                 modal.querySelectorAll('.mx-ls').forEach(c => { c.onchange = onLsChange; });
             }
@@ -363,10 +378,24 @@
             }
 
             // ---------- Gebäudeseite auswerten ----------
+            function rowOf(a) {
+                return a.closest('tr') || a.closest('.row') || (a.parentNode ? a.parentNode.parentNode : null);
+            }
+            function rowTitle(row, fallback) {
+                if (!row) return fallback;
+                const bold = row.querySelector('b, strong');
+                const src = bold || row.querySelector('td') || row;
+                const t = (src.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 120);
+                return t || fallback;
+            }
+
             function parsePage(html, b) {
                 const doc = new DOMParser().parseFromString(html, 'text/html');
                 const links = [];
+                const acts = [];
                 const seen = {};
+
+                // Baubare Erweiterungen (Credits)
                 doc.querySelectorAll('a[href*="/credits"]').forEach(function (a) {
                     const href = a.getAttribute('href') || '';
                     if (href.indexOf('/buildings/' + b.id + '/') === -1) return;
@@ -382,7 +411,29 @@
                     const rowText = row ? row.textContent.replace(/\s+/g, ' ') : '';
                     links.push({ extId: extId, name: name, cost: parseCost(rowText, linkText), href: href });
                 });
-                return links;
+
+                // Fertige, aber nicht einsatzbereite Erweiterungen:
+                // Knopf mit exakt dem Text "Einsatzbereit" in einer Zeile mit "Nicht einsatzbereit"
+                const seenAct = {};
+                doc.querySelectorAll('a').forEach(function (a) {
+                    const t = (a.textContent || '').replace(/\s+/g, ' ').trim();
+                    if (!/^einsatzbereit$/i.test(t)) return;
+                    const href = a.getAttribute('href') || '';
+                    if (!href || href === '#' || href.indexOf('javascript:') === 0) return;
+                    const row = rowOf(a);
+                    if (!row || !/nicht einsatzbereit/i.test(row.textContent || '')) return;
+                    if (seenAct[href]) return;
+                    seenAct[href] = true;
+                    acts.push({
+                        name: rowTitle(row, 'Erweiterung'),
+                        href: href,
+                        method: (a.getAttribute('data-method') || 'get').toLowerCase()
+                    });
+                });
+                if (!acts.length && /nicht einsatzbereit/i.test(doc.body ? doc.body.textContent : '')) {
+                    log('Hinweis ' + b.caption + ': „Nicht einsatzbereit“ gefunden, aber kein Einsatzbereit-Link (evtl. ein Formular-Knopf).');
+                }
+                return { links: links, acts: acts };
             }
 
             // ---------- Scan (parallel, mit Cache und Abbruch) ----------
@@ -415,15 +466,15 @@
                 await runPool(targets, CONCURRENCY, async function (b) {
                     const entry = cache[b.id];
                     if (!fresh && entry && Date.now() - entry.t < CACHE_TTL) {
-                        results[b.id] = entry.links.map(normLink);
+                        results[b.id] = { links: entry.links.map(normLink), acts: entry.acts };
                         cached++;
                     } else {
                         try {
                             const res = await fetchRetry('/buildings/' + b.id, { credentials: 'same-origin' }, true);
                             if (!res.ok) throw new Error('HTTP ' + res.status);
-                            const links = parsePage(await res.text(), b);
-                            results[b.id] = links;
-                            cache[b.id] = { t: Date.now(), links: links };
+                            const parsed = parsePage(await res.text(), b);
+                            results[b.id] = parsed;
+                            cache[b.id] = { t: Date.now(), links: parsed.links, acts: parsed.acts };
                         } catch (e) {
                             errors++;
                             log('Fehler beim Scan von ' + b.caption + ': ' + e);
@@ -437,7 +488,7 @@
 
                 saveCache();
                 targets.forEach(function (b) {
-                    if (results[b.id]) scanned.push({ b: b, links: results[b.id] });
+                    if (results[b.id]) scanned.push({ b: b, links: results[b.id].links, acts: results[b.id].acts });
                 });
                 const aborted = scanAbort;
                 if (!aborted) keys.forEach(function (k) { scannedLs[k] = true; });
@@ -456,7 +507,7 @@
                     ' Gebäude in ' + secs + ' s (' + cached + ' aus Cache' + (errors ? ', ' + errors + ' Fehler' : '') + ').';
                 renderList();
                 updateHint();
-                await refreshCredits();
+                if (mode === 'build') await refreshCredits();
             };
 
             function activeScanned() {
@@ -473,31 +524,63 @@
                 return map;
             }
 
+            // Inaktive Erweiterungen werden über den Namen gruppiert (die IDs sind pro Gebäude verschieden)
+            function computeActMap() {
+                const map = {};
+                activeScanned().forEach(s => s.acts.forEach(a => {
+                    if (!map[a.name]) map[a.name] = { name: a.name, count: 0 };
+                    map[a.name].count++;
+                }));
+                return map;
+            }
+
             function renderList() {
                 const checkedBefore = Array.prototype.map.call(modal.querySelectorAll('.mx-ext:checked'), c => c.value);
-                const extMap = computeExtMap();
-                const items = Object.entries(extMap).sort((a, b) => a[1].name.localeCompare(b[1].name));
-                if (!items.length) {
-                    $('mx-list').innerHTML = '<i>Keine mit Credits baubaren Erweiterungen für diese Auswahl gefunden (evtl. alles gebaut).</i>';
-                    $('mx-actions').style.display = 'none';
-                    return;
+                let html = '';
+
+                if (mode === 'build') {
+                    const items = Object.entries(computeExtMap()).sort((a, b) => a[1].name.localeCompare(b[1].name));
+                    if (!items.length) {
+                        $('mx-list').innerHTML = '<i>Keine mit Credits baubaren Erweiterungen für diese Auswahl gefunden (evtl. alles gebaut).</i>';
+                        $('mx-actions').style.display = 'none';
+                        return;
+                    }
+                    html = items.map(([k, v]) => {
+                        const price = isNaN(v.cost) ? '<span style="color:red">Preis unbekannt</span>' : fmt(v.cost) + ' Credits';
+                        const extra = isNaN(v.cost) ? '' : ', gesamt ' + fmt(v.cost * v.count) + ' Credits';
+                        const chk = checkedBefore.indexOf(k) !== -1 ? ' checked' : '';
+                        return '<div><label><input type="checkbox" class="mx-ext" value="' + esc(k) + '"' + chk + '> ' +
+                            '<b>' + esc(v.name) + '</b> – ' + price +
+                            ' <small>(fehlt in ' + v.count + ' Gebäuden' + extra + ')</small></label></div>';
+                    }).join('');
+                } else {
+                    const items = Object.values(computeActMap()).sort((a, b) => a.name.localeCompare(b.name));
+                    if (!items.length) {
+                        $('mx-list').innerHTML = '<i>Keine Erweiterungen mit „Nicht einsatzbereit“ für diese Auswahl gefunden.</i>';
+                        $('mx-actions').style.display = 'none';
+                        return;
+                    }
+                    html = items.map(v => {
+                        const key = encodeURIComponent(v.name);
+                        const chk = checkedBefore.indexOf(key) !== -1 ? ' checked' : '';
+                        return '<div><label><input type="checkbox" class="mx-ext" value="' + key + '"' + chk + '> ' +
+                            '<b>' + esc(v.name) + '</b> <small>(nicht einsatzbereit in ' + v.count + ' Gebäuden)</small></label></div>';
+                    }).join('');
                 }
-                $('mx-list').innerHTML = items.map(([k, v]) => {
-                    const price = isNaN(v.cost) ? '<span style="color:red">Preis unbekannt</span>' : fmt(v.cost) + ' Credits';
-                    const extra = isNaN(v.cost) ? '' : ', gesamt ' + fmt(v.cost * v.count) + ' Credits';
-                    const chk = checkedBefore.indexOf(k) !== -1 ? ' checked' : '';
-                    return '<div><label><input type="checkbox" class="mx-ext" value="' + k + '"' + chk + '> ' +
-                        '<b>' + v.name + '</b> – ' + price +
-                        ' <small>(fehlt in ' + v.count + ' Gebäuden' + extra + ')</small></label></div>';
-                }).join('');
+
+                $('mx-list').innerHTML = html;
                 modal.querySelectorAll('.mx-ext').forEach(c => { c.onchange = updateSummary; });
                 $('mx-actions').style.display = 'block';
                 updateSummary();
             }
 
             // ---------- Jobs & Summe ----------
+            function selectedValues() {
+                return Array.prototype.map.call(modal.querySelectorAll('.mx-ext:checked'), c => c.value);
+            }
+
             function selectedJobs() {
-                const ids = Array.prototype.map.call(modal.querySelectorAll('.mx-ext:checked'), c => c.value);
+                const ids = selectedValues();
                 const jobs = [];
                 activeScanned().forEach(s => s.links.forEach(l => {
                     if (ids.indexOf(l.extId) !== -1) jobs.push({ b: s.b, l: l });
@@ -505,7 +588,31 @@
                 return jobs;
             }
 
+            function selectedActJobs() {
+                const names = selectedValues().map(decodeURIComponent);
+                const jobs = [];
+                activeScanned().forEach(s => s.acts.forEach(a => {
+                    if (names.indexOf(a.name) !== -1) jobs.push({ b: s.b, a: a });
+                }));
+                return jobs;
+            }
+
             function updateSummary() {
+                const isBuild = mode === 'build';
+                $('mx-refresh').style.display = isBuild ? '' : 'none';
+                $('mx-build').style.display = isBuild ? '' : 'none';
+                $('mx-act').style.display = isBuild ? 'none' : '';
+
+                if (!isBuild) {
+                    const jobs = selectedActJobs();
+                    $('mx-summary').innerHTML = jobs.length
+                        ? 'Einsatzbereit setzen: <b>' + jobs.length + '</b> Erweiterungen in <b>' + new Set(jobs.map(j => j.b.id)).size +
+                          '</b> Gebäuden (<b>' + new Set(jobs.map(j => lsKey(j.b))).size + '</b> Leitstellen)'
+                        : 'Nichts ausgewählt.';
+                    $('mx-act').disabled = !jobs.length;
+                    return;
+                }
+
                 const jobs = selectedJobs();
                 const unknown = jobs.some(j => isNaN(j.l.cost));
                 const total = jobs.reduce((s, j) => s + (isNaN(j.l.cost) ? 0 : j.l.cost), 0);
@@ -596,6 +703,56 @@
                 $('mx-status').textContent = 'Fertig: ' + ok + ' gestartet, ' + fail + ' fehlgeschlagen/übersprungen.';
                 renderList();
                 await refreshCredits();
+            };
+
+            // ---------- Einsatzbereit setzen ----------
+            $('mx-act').onclick = async () => {
+                const jobs = selectedActJobs();
+                if (!jobs.length) { alert('Nichts ausgewählt.'); return; }
+                if (!confirm(jobs.length + ' Erweiterungen in ' + new Set(jobs.map(j => j.b.id)).size +
+                    ' Gebäuden (' + new Set(jobs.map(j => lsKey(j.b))).size + ' Leitstellen) auf „Einsatzbereit“ setzen?')) return;
+
+                $('mx-act').disabled = true;
+                let ok = 0, fail = 0;
+                const okJobs = [];
+                log('Methode/Link des ersten Auftrags: ' + jobs[0].a.method.toUpperCase() + ' ' + jobs[0].a.href);
+
+                for (let i = 0; i < jobs.length; i++) {
+                    const b = jobs[i].b;
+                    const a = jobs[i].a;
+                    $('mx-status').textContent = 'Setze einsatzbereit ' + (i + 1) + '/' + jobs.length + '…';
+                    try {
+                        const opts = {
+                            credentials: 'same-origin',
+                            headers: { 'X-CSRF-Token': csrf(), 'X-Requested-With': 'XMLHttpRequest' }
+                        };
+                        if (a.method !== 'get') opts.method = a.method.toUpperCase();
+                        const res = await fetchRetry(a.href, opts, false);
+                        if (res.ok) {
+                            ok++;
+                            okJobs.push(jobs[i]);
+                            log('✔ ' + b.caption + ': ' + a.name);
+                        } else {
+                            fail++;
+                            log('✖ ' + b.caption + ': ' + a.name + ' (HTTP ' + res.status + ')');
+                        }
+                    } catch (e) {
+                        fail++;
+                        log('✖ ' + b.caption + ': ' + a.name + ' (' + e + ')');
+                    }
+                    await sleep(300);
+                }
+
+                okJobs.forEach(function (j) {
+                    delete cache[j.b.id];
+                    scanned.forEach(function (s) {
+                        if (s.b.id === j.b.id) s.acts = s.acts.filter(function (x) { return x.href !== j.a.href; });
+                    });
+                });
+                saveCache();
+
+                $('mx-status').textContent = 'Fertig: ' + ok + ' einsatzbereit gesetzt, ' + fail + ' fehlgeschlagen.';
+                renderList();
             };
         }
     }
