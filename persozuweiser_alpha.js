@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         LSS Personal-Zuweisung
 // @namespace    lss-personal-zuweisung
-// @version      0.5.4
+// @version      0.5.5
 // @description  Leitstelle wählen, benötigte Ausbildungen je Fahrzeug von den Kaufseiten lesen, passendes Personal auf den Wachen suchen und zuweisen (nur per Klick, mit Vorschau)
 // @match        https://www.leitstellenspiel.de/*
 // @match        https://leitstellenspiel.de/*
@@ -111,6 +111,62 @@
     return null;
   }
 
+  // Seiten-Schemata, falls die API nur einen Teil der Liste liefert (z. B. genau 8000 Fahrzeuge)
+  const PAGE_SCHEMES = [
+    (url, n, page) => url + '?page=' + page,
+    (url, n, page) => url + '?offset=' + n,
+    (url, n, page) => url + '?start=' + n
+  ];
+  const pageScheme = {};
+  let dataNote = '';
+
+  async function fetchMorePages(kind, url, first) {
+    const ids = new Set(first.map(x => x.id));
+    const all = first.slice();
+    let schemeIdx = pageScheme[kind];
+    let page = 2;
+    for (let guard = 0; guard < 40; guard++) {
+      let got = null;
+      const order = schemeIdx != null ? [schemeIdx] : PAGE_SCHEMES.map((_, i) => i);
+      for (const i of order) {
+        try {
+          const r = await fetch(PAGE_SCHEMES[i](url, all.length, page), { credentials: 'same-origin' });
+          if (r.ok) {
+            const l = unwrapList(await r.json());
+            if (l && l.length && !ids.has(l[0].id)) { got = l; schemeIdx = i; break; }
+          }
+        } catch (e) { /* nächstes Schema */ }
+        await sleep(300);
+      }
+      if (!got) break;
+      pageScheme[kind] = schemeIdx;
+      got.forEach(x => { if (!ids.has(x.id)) { ids.add(x.id); all.push(x); } });
+      page++;
+      await sleep(300);
+    }
+    return all;
+  }
+
+  // Bei "runden" Längen (z. B. 8000) besteht der Verdacht auf eine Begrenzung: andere Endpunkte/Seiten versuchen
+  async function completeList(kind, url, list) {
+    if (list.length < 1000 || list.length % 1000 !== 0) return list;
+    const label = kind === 'vehicles' ? 'Fahrzeuge' : 'Gebäude';
+    let best = list, bestUrl = url;
+    for (const other of API_CANDIDATES[kind]) {
+      if (other === url) continue;
+      try {
+        const r = await fetch(other, { credentials: 'same-origin' });
+        if (r.ok) { const l = unwrapList(await r.json()); if (l && l.length > best.length) { best = l; bestUrl = other; } }
+      } catch (e) { /* egal */ }
+      await sleep(300);
+    }
+    const full = await fetchMorePages(kind, bestUrl, best);
+    dataNote += full.length > list.length
+      ? `Die API lieferte zunächst genau ${list.length} ${label} (Begrenzung) – nachgeladen: insgesamt ${full.length}. `
+      : `Die API lieferte genau ${list.length} ${label}. Falls du mehr hast, fehlen die übrigen (Diagnose ausführen und Ergebnis schicken). `;
+    return full;
+  }
+
   async function getList(kind) {
     let lastErr = new Error('Unbekannter Fehler');
     for (let attempt = 0; attempt < 3; attempt++) {
@@ -121,7 +177,7 @@
           const list = unwrapList(await r.json());
           if (!list) { lastErr = new Error(url + ' -> unerwartetes Format'); continue; }
           API_CANDIDATES[kind] = [url, ...API_CANDIDATES[kind].filter(u => u !== url)];
-          return list;
+          return await completeList(kind, url, list);
         } catch (e) { lastErr = e; }
       }
       await sleep(1500 * (attempt + 1));
@@ -129,7 +185,6 @@
     throw lastErr;
   }
 
-  let dataNote = '';
   async function loadData(force) {
     if (!force && buildings.length && vehicles.length && Date.now() - lastLoad < 120000) return;
     dataNote = '';
@@ -748,7 +803,7 @@
     if (!vehs.length) {
       $('#lsspz-req').innerHTML = `<em>In dieser Leitstelle wurden keine Fahrzeuge gefunden.</em>
         <div style="color:#777">API-Stand: ${vehicles.length} Fahrzeuge und ${buildings.length} Gebäude insgesamt, ${lsBuildings.length} Gebäude in dieser Leitstelle.
-        ${vehicles.length ? '' : 'Die API hat keine Fahrzeuge geliefert – bitte kurz warten und das Fenster neu öffnen.'}</div>`;
+        ${vehicles.length ? (vehicles.length % 1000 === 0 ? 'Die API lieferte genau ' + vehicles.length + ' Fahrzeuge – vermutlich eine Begrenzung, neue Wachen (hohe IDs) fehlen dann. Bitte „Diagnose“ ausführen und das Ergebnis schicken.' : '') : 'Die API hat keine Fahrzeuge geliefert – bitte kurz warten und das Fenster neu öffnen.'}</div>`;
       setBusy(false);
       return;
     }
@@ -980,6 +1035,48 @@
     if (plan.length) $('#lsspz-go').onclick = startAssigning;
   }
 
+  // Untersucht die Fahrzeug-API (Endpunkte, Begrenzung, Seiten) für die Diagnose
+  async function probeVehicleApi() {
+    const out = { kandidaten: [], paging: [] };
+    const probeOne = async (url, withHeaders) => {
+      const res = { url };
+      try {
+        const r = await fetch(url, { credentials: 'same-origin' });
+        res.status = r.status;
+        if (withHeaders) {
+          const hdr = {};
+          r.headers.forEach((v, k) => { if (/total|page|link|limit|count|next|rate|retry/i.test(k)) hdr[k] = v; });
+          res.headers = hdr; res.contentType = r.headers.get('content-type');
+        }
+        if (r.ok) {
+          const j = await r.json();
+          res.isArray = Array.isArray(j);
+          if (!res.isArray && j && typeof j === 'object') res.keys = Object.keys(j).slice(0, 15);
+          const l = unwrapList(j);
+          if (l) {
+            res.length = l.length;
+            res.firstId = l[0]?.id;
+            res.lastId = l[l.length - 1]?.id;
+            res.maxId = l.reduce((m, x) => Math.max(m, x.id || 0), 0);
+          }
+        }
+      } catch (e) { res.error = e.message; }
+      return res;
+    };
+    for (const url of [...new Set([...API_CANDIDATES.vehicles, '/api/v2/vehicles', '/api2/vehicles'])]) {
+      out.kandidaten.push(await probeOne(url, true));
+      await sleep(400);
+    }
+    const base = API_CANDIDATES.vehicles[0];
+    const n = vehicles.length;
+    for (const u of [base + '?page=2', base + '?offset=' + n, base + '?start=' + n]) {
+      out.paging.push(await probeOne(u, false));
+      await sleep(400);
+    }
+    out.imSpeicher = { fahrzeuge: vehicles.length, gebaeude: buildings.length, hoechsteFahrzeugId: vehicles.reduce((m, x) => Math.max(m, x.id || 0), 0) };
+    return out;
+  }
+
   // Untersucht mögliche Kaufseiten einer Wache (für die Diagnose)
   async function probeBuyPages(buildingId) {
     const urls = [...new Set([
@@ -1132,7 +1229,28 @@
       await sleep(PAGE_DELAY);
     }
 
+    const apiDump = await probeVehicleApi();
+    // Gebäude der gewählten Leitstelle ohne Fahrzeuge in der API: Fahrzeugliste auf der Gebäudeseite ansehen
+    let gebaeudeOhneApiFahrzeuge = null;
+    const selLs = selectedLs();
+    const lbld = selLs ? buildings.find(x => belongsToLs(x, selLs) && !vehicles.some(v => v.building_id === x.id)) : null;
+    if (lbld) {
+      gebaeudeOhneApiFahrzeuge = { id: lbld.id, caption: lbld.caption, building_type: lbld.building_type };
+      try {
+        const r = await fetch(BUILDING_PAGE(lbld.id), { credentials: 'same-origin' });
+        gebaeudeOhneApiFahrzeuge.status = r.status;
+        if (r.ok) {
+          const doc = new DOMParser().parseFromString(await r.text(), 'text/html');
+          const links = [...doc.querySelectorAll('a[href]')].filter(a => /^\/vehicles\/\d+$/.test(a.getAttribute('href') || ''));
+          gebaeudeOhneApiFahrzeuge.fahrzeugLinks = links.length;
+          gebaeudeOhneApiFahrzeuge.sample = links.slice(0, 2).map(a => ({ href: a.getAttribute('href'), row: (a.closest('tr') || a.parentElement).outerHTML.slice(0, 800) }));
+        }
+      } catch (e) { gebaeudeOhneApiFahrzeuge.error = e.message; }
+    }
+
     const dump = {
+      api: apiDump,
+      gebaeudeOhneApiFahrzeuge,
       leitstellen: buildings.filter(x => x.building_type === 7).map(l => {
         const m = {};
         buildings.filter(x => belongsToLs(x, l.id)).forEach(x => { m[btName(x.building_type)] = (m[btName(x.building_type)] || 0) + 1; });
