@@ -2150,63 +2150,61 @@
     }
 
     // Mission Share
+    // Pause zwischen den einzelnen Freigaben (in Millisekunden)
+    const SHARE_DELAY_MS = 150;
+    const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+    // Mission Share – nacheinander, mit Pause
     async function shareMissions(missions) {
+       const total = missions.length;
+        const msgText = $('.shMiMessageRow:has(.shMiMessageSelect:checked) .shMiMessage')[0].value;
+
         form.set('utf8', '\u2713');
         form.set('authenticity_token', $('meta[name="csrf-token"]').attr('content'));
         form.set('mission_reply[alliance_chat]', '0');
-        form.set('mission_reply[content]', $('.shMiMessageRow:has(.shMiMessageSelect:checked) .shMiMessage')[0].value);
+        form.set('mission_reply[content]', msgText);
         form.set('button', '');
 
-        var prgsInitialize = 0, prgsShare = 0, prgsMessage = 0;
-        const fetchPromises = [];
+       const setPrg = (sel, n) => $(sel)
+        .attr('aria-valuenow', n)
+        .css({ width: Math.round(n / total * 100) + '%' })
+        .text(n + ' / ' + total.toLocaleString());
 
-        for (var i = 0; i < missions.length; i++) {
+        let nInit = 0, nShare = 0, nMsg = 0;
+
+       try {
+        for (let i = 0; i < total; i++) {
+            // Modul wurde zwischendurch ausgeschaltet oder Dialog entfernt -> abbrechen
+            if (!document.getElementById('shMiModal')) break;
+
             const m = missions[i];
-            prgsInitialize++;
-            var percentI = Math.round(prgsInitialize / missions.length * 100);
-            $('#shMiPrgsInitialize')
-                .attr("aria-valuenow", prgsInitialize)
-                .css({ "width": percentI + "%" })
-                .text(prgsInitialize + " / " + missions.length.toLocaleString());
+            setPrg('#shMiPrgsInitialize', ++nInit);
 
-            fetchPromises.push(
-                $.get("https://www.leitstellenspiel.de/" + m.id.replace('_', 's/') + "/alliance").done(function () {
-                    prgsShare++;
-                    var percentS = Math.round(prgsShare / missions.length * 100);
-                    $('#shMiPrgsShare')
-                        .attr("aria-valuenow", prgsShare)
-                        .css({ "width": percentS + "%" })
-                        .text(prgsShare + " / " + missions.length.toLocaleString());
+            try {
+                await $.get('https://www.leitstellenspiel.de/' + m.id.replace('_', 's/') + '/alliance');
+                setPrg('#shMiPrgsShare', ++nShare);
 
-                    if ($('#shMiMessage')[0].value != "") {
-                        form.set('mission_reply[mission_id]', m.id.replace('mission_', ''));
-                        fetch("https://www.leitstellenspiel.de/mission_replies", {
-                            method: 'POST',
-                            body: new URLSearchParams(form),
-                        }).then(function () {
-                            prgsMessage++;
-                            var percentM = Math.round(prgsMessage / missions.length * 100);
-                            $('#shMiPrgsMessage')
-                                .attr("aria-valuenow", prgsMessage)
-                                .css({ "width": percentM + "%" })
-                                .text(prgsMessage + " / " + missions.length.toLocaleString());
-                            if (document.querySelector('#shMiPrgsMessage').style.width === '100%') document.querySelector('#shMiShare').removeAttribute('disabled');
-                        });
-                    } else {
-                        $('#shMiPrgsMessage')
-                            .attr("aria-valuenow", missions.length.toLocaleString())
-                            .css({ "width": 100 + "%" })
-                            .text(missions.length.toLocaleString() + " / " + missions.length.toLocaleString());
-                    }
-                })
-            );
-        };
-        if (document.querySelector('#shMiPrgsMessage').style.width === '100%') document.querySelector('#shMiShare').removeAttribute('disabled');
-        await Promise.all(fetchPromises);
-    }
-        },
+                if (msgText !== '') {
+                    form.set('mission_reply[mission_id]', m.id.replace('mission_', ''));
+                    await fetch('https://www.leitstellenspiel.de/mission_replies', {
+                        method: 'POST',
+                        body: new URLSearchParams(form),
+                    });
+                }
+                setPrg('#shMiPrgsMessage', ++nMsg);
+            } catch (e) {
+                ctx.warn('Freigabe fehlgeschlagen für', m.id, e);
+            }
+
+            // Pause vor dem nächsten Einsatz (nach dem letzten nicht nötig)
+            if (i < total - 1) await sleep(SHARE_DELAY_MS);
+            }
+        } finally {
+            $('#shMiShare').removeAttr('disabled');
+           }
+         }
+       },
     });
-
     // ======================================================================
     // NEUES MODUL HINZUFÜGEN – Vorlage (einfach kopieren und ausfüllen):
     //
