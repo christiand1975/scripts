@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         LSS Toolbox
 // @namespace    lss-toolbox
-// @version      2.2.1
-// @description  Bündelt mehrere Leitstellenspiel-Helfer als einzeln schaltbare Module (Fahrzeug-Abgleich, Ausbildungscheck, Personal-Übersicht, MissionShare)
+// @version      2.3.0
+// @description  Bündelt mehrere Leitstellenspiel-Helfer als einzeln schaltbare Module (Fahrzeug-Abgleich, Ausbildungscheck, Personal-Übersicht, MissionShare, Maasenausbau)
 // @match        https://www.leitstellenspiel.de/*
 // @run-at       document-idle
 // @updateURL    https://raw.githubusercontent.com/christiand1975/scripts/main/lss-toolbox.user.js
@@ -2205,6 +2205,777 @@
          }
        },
     });
+
+        // ======================================================================
+    // MODUL 5: Massenausbau (Erweiterungen bauen / einsatzbereit setzen)
+    // ======================================================================
+    register({
+        id: 'massenausbau',
+        name: 'Massenausbau',
+        description: 'Erweiterungen leitstellenübergreifend bauen (Credits) und einsatzbereit setzen, mit Leitstellenfilter.',
+        where: 'Spielmenü (unter „Notizen“)',
+        match: loc => window.top === window,
+
+        init(ctx) {
+    let alive = true;
+    let menuObserver = null;
+    let menuTimer = null;
+    let fallbackTimer = null;
+    let modal = null;
+    let opener = null;
+    let scanning = false;
+    let scanAbort = false;
+
+    // Auslöser (nur als Fallback sichtbar, wenn kein Menüeintrag gefunden wird)
+    const btn = document.createElement('button');
+    btn.id = 'mx-open-btn';
+
+    function cleanClass(c) {
+        return (c || '').split(/\s+/).filter(function (x) {
+            return x && x.indexOf('lightbox') === -1;
+        }).join(' ');
+    }
+
+    function findNotesLinks() {
+        const res = [];
+        const links = document.querySelectorAll('a');
+        for (let i = 0; i < links.length; i++) {
+            const x = links[i];
+            if (x.closest('.mx-menu-entry') || x.closest('#lsstb-overlay')) continue;
+            const h = x.getAttribute('href') || '';
+            const t = (x.textContent || '').replace(/\s+/g, ' ').trim();
+            if (/^\/notes?(\/|\?|$)/.test(h) || /^Notizen?$/i.test(t)) res.push(x);
+        }
+        return res;
+    }
+
+    function openMx(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        btn.click();
+    }
+
+    function addMenuEntry() {
+        if (!alive) return false;
+        findNotesLinks().forEach(function (notes) {
+            const li = notes.closest('li');
+            const anchor = li || notes;
+            const parent = anchor.parentNode;
+            // Schon ein Eintrag in diesem Menü? (der Toolbox-Eintrag kann direkt hinter "Notizen" stehen)
+            if (parent.querySelector(':scope > .mx-menu-entry')) return;
+
+            let entry;
+            if (li) {
+                entry = document.createElement('li');
+                entry.className = cleanClass(li.className) + ' mx-menu-entry';
+                entry.setAttribute('role', 'presentation');
+                const a = document.createElement('a');
+                a.href = '#';
+                a.className = cleanClass(notes.className);
+                a.textContent = '🏗 Massenausbau';
+                a.onclick = openMx;
+                entry.appendChild(a);
+            } else {
+                entry = document.createElement('a');
+                entry.href = '#';
+                entry.className = cleanClass(notes.className) + ' mx-menu-entry';
+                entry.textContent = '🏗 Massenausbau';
+                entry.onclick = openMx;
+            }
+            parent.insertBefore(entry, anchor.nextSibling);
+        });
+        return document.querySelector('.mx-menu-entry') !== null;
+    }
+
+    // Reste einer eventuell noch laufenden Einzel-Version entfernen
+    document.querySelectorAll('#mx-open-btn, #mx-modal, .mx-menu-entry').forEach(n => n.remove());
+
+    addMenuEntry();
+    let pending = false;
+    menuObserver = new MutationObserver(function () {
+        if (pending) return;
+        pending = true;
+        menuTimer = setTimeout(function () { pending = false; addMenuEntry(); }, 300);
+    });
+    menuObserver.observe(document.body, { childList: true, subtree: true });
+
+    // Fallback: nur auf der Hauptseite, nur wenn kein Menüeintrag gefunden wurde
+    fallbackTimer = setTimeout(function () {
+        if (!alive) return;
+        if (document.querySelector('.mx-menu-entry')) return;
+        if (location.pathname !== '/') return;
+        btn.textContent = '🏗 Massenausbau';
+        btn.style.cssText = 'position:fixed;right:10px;bottom:80px;z-index:2147483647;padding:10px 14px;' +
+            'background:#337ab7;color:#fff;border:0;border-radius:6px;font-size:16px;' +
+            'box-shadow:0 2px 8px rgba(0,0,0,.5);';
+        document.body.appendChild(btn);
+        ctx.log('Notizen-Link nicht gefunden, Fallback-Button aktiv');
+    }, 12000);
+
+    // Aufräumen beim Ausschalten
+    ctx.onCleanup(() => {
+        alive = false;
+        scanAbort = true;
+        if (menuObserver) menuObserver.disconnect();
+        clearTimeout(menuTimer);
+        clearTimeout(fallbackTimer);
+        document.querySelectorAll('.mx-menu-entry').forEach(n => n.remove());
+        btn.remove();
+        if (modal) modal.remove();
+    });
+
+    let initError = null;
+    try {
+        setup();
+    } catch (e) {
+        initError = e;
+        ctx.error('Initialisierungsfehler', e);
+    }
+
+    btn.onclick = function () {
+        if (initError) { alert('Massenausbau-Fehler: ' + initError); return; }
+        if (opener) opener();
+    };
+
+    function setup() {
+        const TYPE_NAMES = {
+            0: 'Feuerwache', 1: 'Feuerwehrschule', 2: 'Rettungswache', 3: 'Rettungsschule',
+            4: 'Krankenhaus', 5: 'Rettungshubschrauber-Station', 6: 'Polizeiwache',
+            7: 'Leitstelle', 8: 'Polizeischule', 9: 'THW', 10: 'THW Bundesschule',
+            11: 'Bereitschaftspolizei', 12: 'SEG', 13: 'Polizeihubschrauber-Station',
+            14: 'Bereitstellungsraum', 15: 'Wasserrettung', 17: 'Polizei-Sondereinheit',
+            18: 'Feuerwache (Kleinwache)', 19: 'Polizeiwache (Kleinwache)',
+            20: 'Rettungswache (Kleinwache)'
+        };
+        const typeName = t => TYPE_NAMES[t] || ('Typ ' + t);
+        const sleep = ms => new Promise(r => setTimeout(r, ms));
+        const csrf = () => { const m = document.querySelector('meta[name="csrf-token"]'); return m ? m.content : ''; };
+        const fmt = n => Number(n).toLocaleString('de-DE');
+        const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+        const firstNum = function () {
+            for (let i = 0; i < arguments.length; i++) {
+                const v = arguments[i];
+                if (typeof v === 'number' && !isNaN(v)) return v;
+            }
+            return null;
+        };
+
+        // ---------- Einstellungen für den Scan ----------
+        const CONCURRENCY = 4;                 // gleichzeitige Requests (bei HTTP 429 im Log auf 2-3 senken)
+        const CACHE_TTL = 15 * 60 * 1000;      // Scan-Ergebnisse 15 Minuten wiederverwenden
+        const CACHE_KEY = 'mx-scan-cache-v2';
+
+        let buildings = [];
+        let scanned = [];                      // [{b, links, acts}]
+        let scannedLs = {};
+        let lsList = [];
+        let credits = null;
+        let mode = 'build';                    // 'build' | 'activate'
+
+        // ---------- Cache ----------
+        let cache = {};
+        try {
+            cache = JSON.parse(localStorage.getItem(CACHE_KEY) || '{}');
+            const now = Date.now();
+            Object.keys(cache).forEach(function (k) {
+                if (!cache[k] || !cache[k].links || !cache[k].acts || now - cache[k].t > CACHE_TTL) delete cache[k];
+            });
+        } catch (e) { cache = {}; }
+        function saveCache() {
+            try { localStorage.setItem(CACHE_KEY, JSON.stringify(cache)); } catch (e) { /* voll/gesperrt: egal */ }
+        }
+        // JSON macht aus NaN ein null -> wieder zu NaN, sonst würde ein unbekannter Preis als 0 gelten
+        function normLink(l) {
+            return {
+                extId: l.extId,
+                name: l.name,
+                cost: (l.cost === null || l.cost === undefined) ? NaN : l.cost,
+                href: l.href
+            };
+        }
+
+        // ---------- Request mit Wiederholung bei Überlastung ----------
+        async function fetchRetry(url, opts, retry5xx) {
+            let lastStatus = 0;
+            for (let i = 0; i < 4; i++) {
+                const res = await fetch(url, opts);
+                lastStatus = res.status;
+                if (res.status === 429 || (retry5xx && res.status >= 500)) {
+                    const ra = parseInt(res.headers.get('Retry-After') || '', 10);
+                    await sleep((isNaN(ra) ? 1000 * (i + 1) : ra * 1000) + Math.random() * 300);
+                    continue;
+                }
+                return res;
+            }
+            throw new Error('HTTP ' + lastStatus + ' (zu viele Versuche)');
+        }
+
+        // ---------- Parallel-Ausführung mit Limit ----------
+        async function runPool(items, limit, worker) {
+            let idx = 0;
+            const runners = [];
+            for (let k = 0; k < limit; k++) {
+                runners.push((async function () {
+                    while (idx < items.length && !scanAbort) {
+                        const my = idx++;
+                        await worker(items[my], my);
+                    }
+                })());
+            }
+            await Promise.all(runners);
+        }
+
+        function lsKey(b) {
+            if (b.leitstelle_building_id !== null && b.leitstelle_building_id !== undefined) return String(b.leitstelle_building_id);
+            if (b.building_type === 7) return String(b.id);
+            return 'none';
+        }
+
+        // ---------- Fenster ----------
+        modal = document.createElement('div');
+        modal.id = 'mx-modal';
+        modal.style.cssText = 'display:none;position:fixed;top:5%;left:50%;transform:translateX(-50%);' +
+            'width:700px;max-width:95vw;max-height:88vh;overflow:auto;background:#fff;color:#000;' +
+            'border:2px solid #444;border-radius:6px;padding:15px;z-index:2147483647;box-shadow:0 0 25px #000;';
+        modal.innerHTML =
+            '<div style="display:flex;justify-content:space-between;align-items:center">' +
+            '<h4 style="margin:0">Erweiterungen leitstellenübergreifend</h4>' +
+            '<button id="mx-close" class="btn btn-default btn-xs">✕</button></div><hr>' +
+            '<div style="margin-bottom:8px">' +
+            '<label style="font-weight:normal;margin-right:14px"><input type="radio" name="mx-mode" value="build" checked> Bauen (Credits)</label>' +
+            '<label style="font-weight:normal"><input type="radio" name="mx-mode" value="activate"> Einsatzbereit setzen</label></div>' +
+            '<div id="mx-status">Lade Gebäude…</div>' +
+            '<div style="margin:10px 0;padding:8px;border:1px solid #ccc;border-radius:4px">' +
+            '<b>Leitstellen</b> ' +
+            '<button id="mx-ls-all" class="btn btn-default btn-xs">Alle</button> ' +
+            '<button id="mx-ls-none" class="btn btn-default btn-xs">Keine</button>' +
+            '<div id="mx-ls" style="max-height:160px;overflow:auto;margin-top:6px"></div></div>' +
+            '<div style="margin:10px 0">' +
+            '<select id="mx-type" class="form-control" style="display:inline-block;width:auto" disabled></select> ' +
+            '<button id="mx-scan" class="btn btn-info btn-sm" disabled>Erweiterungen suchen</button> ' +
+            '<label style="font-weight:normal;margin-left:8px"><input type="checkbox" id="mx-fresh"> Cache ignorieren</label></div>' +
+            '<div id="mx-hint" style="color:#b94a00;margin-bottom:6px"></div>' +
+            '<div id="mx-list"></div>' +
+            '<div id="mx-actions" style="display:none;margin-top:10px">' +
+            '<div id="mx-summary" style="padding:8px;border:1px solid #ccc;border-radius:4px;margin-bottom:8px"></div>' +
+            '<button id="mx-refresh" class="btn btn-default btn-sm">Credits aktualisieren</button> ' +
+            '<button id="mx-build" class="btn btn-success" disabled>Ausgewählte bauen</button>' +
+            '<button id="mx-act" class="btn btn-success" disabled style="display:none">Ausgewählte einsatzbereit setzen</button></div>' +
+            '<pre id="mx-log" style="max-height:200px;overflow:auto;margin-top:10px;display:none"></pre>';
+        document.body.appendChild(modal);
+
+        const $ = id => modal.querySelector('#' + id);
+        const log = msg => {
+            const l = $('mx-log');
+            l.style.display = 'block';
+            l.textContent += msg + '\n';
+            l.scrollTop = l.scrollHeight;
+        };
+
+        opener = async function () {
+            modal.style.display = 'block';
+            if (!buildings.length) {
+                try { await loadBuildings(); }
+                catch (e) { $('mx-status').textContent = 'Fehler beim Laden: ' + e; }
+            }
+        };
+        $('mx-close').onclick = () => { modal.style.display = 'none'; };
+
+        // ---------- Modus ----------
+        modal.querySelectorAll('input[name="mx-mode"]').forEach(function (r) {
+            r.onchange = async function () {
+                mode = r.value;
+                if (scanned.length) renderList();
+                if (mode === 'build' && scanned.length && credits === null) await refreshCredits();
+            };
+        });
+
+        // ---------- Leitstellenfilter ----------
+        function selectedLsKeys() {
+            return Array.prototype.map.call(modal.querySelectorAll('.mx-ls:checked'), c => c.value);
+        }
+
+        function renderLs() {
+            $('mx-ls').innerHTML = lsList.map(ls =>
+                '<div><label style="font-weight:normal"><input type="checkbox" class="mx-ls" value="' + ls.key + '" checked> ' +
+                esc(ls.name) + ' <small>(' + ls.count + ' Gebäude)</small></label></div>'
+            ).join('');
+            modal.querySelectorAll('.mx-ls').forEach(c => { c.onchange = onLsChange; });
+        }
+
+        function onLsChange() {
+            rebuildTypeOptions();
+            if (scanned.length) renderList();
+            updateHint();
+        }
+
+        function updateHint() {
+            if (!scanned.length) { $('mx-hint').textContent = ''; return; }
+            const missing = selectedLsKeys().filter(k => !scannedLs[k]);
+            $('mx-hint').textContent = missing.length
+                ? '⚠ ' + missing.length + ' gewählte Leitstelle(n) wurden noch nicht gescannt – bitte „Erweiterungen suchen“ erneut klicken.'
+                : '';
+        }
+
+        $('mx-ls-all').onclick = () => {
+            modal.querySelectorAll('.mx-ls').forEach(c => { c.checked = true; });
+            onLsChange();
+        };
+        $('mx-ls-none').onclick = () => {
+            modal.querySelectorAll('.mx-ls').forEach(c => { c.checked = false; });
+            onLsChange();
+        };
+
+        function rebuildTypeOptions() {
+            const keys = selectedLsKeys();
+            const counts = {};
+            buildings.forEach(b => {
+                if (keys.indexOf(lsKey(b)) === -1) return;
+                counts[b.building_type] = (counts[b.building_type] || 0) + 1;
+            });
+            const sel = $('mx-type');
+            const prev = sel.value;
+            sel.innerHTML = Object.keys(counts).map(Number).sort((a, b) => a - b)
+                .map(t => '<option value="' + t + '">' + typeName(t) + ' (' + counts[t] + ')</option>').join('');
+            if (prev && counts[prev]) sel.value = prev;
+            sel.disabled = !Object.keys(counts).length;
+            $('mx-scan').disabled = sel.disabled;
+        }
+
+        // ---------- Credits ----------
+        async function fetchCredits() {
+            const urls = ['/api/credits', '/api/userinfo'];
+            for (const url of urls) {
+                try {
+                    const j = await (await fetch(url, { credentials: 'same-origin' })).json();
+                    const v = firstNum(j.credits_user_current, j.user_credits, j.credits_user, j.credits);
+                    if (v !== null) return v;
+                } catch (e) { /* nächste Quelle */ }
+            }
+            return null;
+        }
+
+        async function refreshCredits() {
+            credits = await fetchCredits();
+            if (credits === null) {
+                const input = prompt('Credits konnten nicht automatisch gelesen werden.\nBitte aktuellen Credit-Stand eingeben:');
+                const n = parseInt((input || '').replace(/[^\d]/g, ''), 10);
+                credits = isNaN(n) ? null : n;
+            }
+            updateSummary();
+        }
+
+        function parseCost(rowText, linkText) {
+            const m = (rowText || '').match(/([\d.,]+)\s*Credits/i) || (linkText || '').match(/([\d.,]+)/);
+            if (!m) return NaN;
+            const n = parseInt(m[1].replace(/[^\d]/g, ''), 10);
+            return isNaN(n) ? NaN : n;
+        }
+
+        // ---------- Gebäude laden ----------
+        async function loadBuildings() {
+            $('mx-status').textContent = 'Lade alle Gebäude…';
+            buildings = await (await fetch('/api/buildings', { credentials: 'same-origin' })).json();
+
+            const names = {};
+            buildings.forEach(b => { if (b.building_type === 7) names[String(b.id)] = b.caption; });
+            const cnt = {};
+            buildings.forEach(b => { const k = lsKey(b); cnt[k] = (cnt[k] || 0) + 1; });
+            lsList = Object.keys(cnt).map(k => ({
+                key: k,
+                name: k === 'none' ? 'Ohne Zuordnung' : (names[k] || ('Leitstelle ' + k)),
+                count: cnt[k]
+            })).sort((a, b) => a.name.localeCompare(b.name));
+
+            renderLs();
+            rebuildTypeOptions();
+            $('mx-status').textContent = buildings.length + ' Gebäude aus ' + lsList.length + ' Leitstellen-Gruppen geladen.';
+        }
+
+        // ---------- Gebäudeseite auswerten ----------
+        function rowOf(a) {
+            return a.closest('tr') || a.closest('.row') || (a.parentNode ? a.parentNode.parentNode : null);
+        }
+        function rowTitle(row, fallback) {
+            if (!row) return fallback;
+            const bold = row.querySelector('b, strong');
+            const src = bold || row.querySelector('td') || row;
+            const t = (src.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 120);
+            return t || fallback;
+        }
+
+        function parsePage(html, b) {
+            const doc = new DOMParser().parseFromString(html, 'text/html');
+            const links = [];
+            const acts = [];
+            const seen = {};
+
+            // Baubare Erweiterungen (Credits)
+            doc.querySelectorAll('a[href*="/credits"]').forEach(function (a) {
+                const href = a.getAttribute('href') || '';
+                if (href.indexOf('/buildings/' + b.id + '/') === -1) return;
+                const m = href.match(/\/buildings\/\d+\/(?:extension|expand_do|specialization)[^?]*\/credits\/?([^?\s]*)/);
+                if (!m) { log('Unbekanntes Credit-Link-Format: ' + href); return; }
+                const extId = m[1] || href;
+                if (seen[extId]) return;
+                seen[extId] = true;
+                const row = a.closest('tr');
+                const firstTd = row ? row.querySelector('td') : null;
+                const name = firstTd ? firstTd.textContent.trim().replace(/\s+/g, ' ') : ('Erweiterung ' + extId);
+                const linkText = a.textContent.trim().replace(/\s+/g, ' ');
+                const rowText = row ? row.textContent.replace(/\s+/g, ' ') : '';
+                links.push({ extId: extId, name: name, cost: parseCost(rowText, linkText), href: href });
+            });
+
+            // Fertige, aber nicht einsatzbereite Erweiterungen:
+            // Knopf mit exakt dem Text "Einsatzbereit" in einer Zeile mit "Nicht einsatzbereit"
+            const seenAct = {};
+            doc.querySelectorAll('a').forEach(function (a) {
+                const t = (a.textContent || '').replace(/\s+/g, ' ').trim();
+                if (!/^einsatzbereit$/i.test(t)) return;
+                const href = a.getAttribute('href') || '';
+                if (!href || href === '#' || href.indexOf('javascript:') === 0) return;
+                const row = rowOf(a);
+                if (!row || !/nicht einsatzbereit/i.test(row.textContent || '')) return;
+                if (seenAct[href]) return;
+                seenAct[href] = true;
+                acts.push({
+                    name: rowTitle(row, 'Erweiterung'),
+                    href: href,
+                    method: (a.getAttribute('data-method') || 'get').toLowerCase()
+                });
+            });
+            if (!acts.length && /nicht einsatzbereit/i.test(doc.body ? doc.body.textContent : '')) {
+                log('Hinweis ' + b.caption + ': „Nicht einsatzbereit“ gefunden, aber kein Einsatzbereit-Link (evtl. ein Formular-Knopf).');
+            }
+            return { links: links, acts: acts };
+        }
+
+        // ---------- Scan (parallel, mit Cache und Abbruch) ----------
+        $('mx-scan').onclick = async function () {
+            if (scanning) {
+                scanAbort = true;
+                $('mx-scan').textContent = 'Breche ab…';
+                return;
+            }
+            const type = Number($('mx-type').value);
+            const keys = selectedLsKeys();
+            const targets = buildings.filter(b => b.building_type === type && keys.indexOf(lsKey(b)) !== -1);
+            if (!targets.length) { alert('Keine Gebäude für diese Auswahl.'); return; }
+            const fresh = $('mx-fresh').checked;
+
+            scanning = true;
+            scanAbort = false;
+            scanned = [];
+            scannedLs = {};
+            $('mx-list').innerHTML = '';
+            $('mx-hint').textContent = '';
+            $('mx-actions').style.display = 'none';
+            $('mx-scan').textContent = 'Abbrechen';
+            $('mx-type').disabled = true;
+
+            const results = {};
+            let done = 0, cached = 0, errors = 0;
+            const t0 = Date.now();
+
+            await runPool(targets, CONCURRENCY, async function (b) {
+                const entry = cache[b.id];
+                if (!fresh && entry && Date.now() - entry.t < CACHE_TTL) {
+                    results[b.id] = { links: entry.links.map(normLink), acts: entry.acts };
+                    cached++;
+                } else {
+                    try {
+                        const res = await fetchRetry('/buildings/' + b.id, { credentials: 'same-origin' }, true);
+                        if (!res.ok) throw new Error('HTTP ' + res.status);
+                        const parsed = parsePage(await res.text(), b);
+                        results[b.id] = parsed;
+                        cache[b.id] = { t: Date.now(), links: parsed.links, acts: parsed.acts };
+                    } catch (e) {
+                        errors++;
+                        log('Fehler beim Scan von ' + b.caption + ': ' + e);
+                    }
+                    await sleep(60);
+                }
+                done++;
+                $('mx-status').textContent = 'Scanne ' + done + '/' + targets.length +
+                    (cached ? ' (' + cached + ' aus Cache)' : '') + '…';
+            });
+
+            saveCache();
+            targets.forEach(function (b) {
+                if (results[b.id]) scanned.push({ b: b, links: results[b.id].links, acts: results[b.id].acts });
+            });
+            const aborted = scanAbort;
+            if (!aborted) keys.forEach(function (k) { scannedLs[k] = true; });
+
+            scanning = false;
+            scanAbort = false;
+            $('mx-scan').textContent = 'Erweiterungen suchen';
+            rebuildTypeOptions();
+
+            const secs = Math.round((Date.now() - t0) / 1000);
+            if (aborted && !scanned.length) {
+                $('mx-status').textContent = 'Scan abgebrochen.';
+                return;
+            }
+            $('mx-status').textContent = (aborted ? 'Scan abgebrochen: ' : 'Scan fertig: ') + scanned.length +
+                ' Gebäude in ' + secs + ' s (' + cached + ' aus Cache' + (errors ? ', ' + errors + ' Fehler' : '') + ').';
+            renderList();
+            updateHint();
+            if (mode === 'build') await refreshCredits();
+        };
+
+        function activeScanned() {
+            const keys = selectedLsKeys();
+            return scanned.filter(s => keys.indexOf(lsKey(s.b)) !== -1);
+        }
+
+        function computeExtMap() {
+            const map = {};
+            activeScanned().forEach(s => s.links.forEach(l => {
+                if (!map[l.extId]) map[l.extId] = Object.assign({}, l, { count: 0 });
+                map[l.extId].count++;
+            }));
+            return map;
+        }
+
+        // Inaktive Erweiterungen werden über den Namen gruppiert (die IDs sind pro Gebäude verschieden)
+        function computeActMap() {
+            const map = {};
+            activeScanned().forEach(s => s.acts.forEach(a => {
+                if (!map[a.name]) map[a.name] = { name: a.name, count: 0 };
+                map[a.name].count++;
+            }));
+            return map;
+        }
+
+        function renderList() {
+            const checkedBefore = Array.prototype.map.call(modal.querySelectorAll('.mx-ext:checked'), c => c.value);
+            let html = '';
+
+            if (mode === 'build') {
+                const items = Object.entries(computeExtMap()).sort((a, b) => a[1].name.localeCompare(b[1].name));
+                if (!items.length) {
+                    $('mx-list').innerHTML = '<i>Keine mit Credits baubaren Erweiterungen für diese Auswahl gefunden (evtl. alles gebaut).</i>';
+                    $('mx-actions').style.display = 'none';
+                    return;
+                }
+                html = items.map(([k, v]) => {
+                    const price = isNaN(v.cost) ? '<span style="color:red">Preis unbekannt</span>' : fmt(v.cost) + ' Credits';
+                    const extra = isNaN(v.cost) ? '' : ', gesamt ' + fmt(v.cost * v.count) + ' Credits';
+                    const chk = checkedBefore.indexOf(k) !== -1 ? ' checked' : '';
+                    return '<div><label><input type="checkbox" class="mx-ext" value="' + esc(k) + '"' + chk + '> ' +
+                        '<b>' + esc(v.name) + '</b> – ' + price +
+                        ' <small>(fehlt in ' + v.count + ' Gebäuden' + extra + ')</small></label></div>';
+                }).join('');
+            } else {
+                const items = Object.values(computeActMap()).sort((a, b) => a.name.localeCompare(b.name));
+                if (!items.length) {
+                    $('mx-list').innerHTML = '<i>Keine Erweiterungen mit „Nicht einsatzbereit“ für diese Auswahl gefunden.</i>';
+                    $('mx-actions').style.display = 'none';
+                    return;
+                }
+                html = items.map(v => {
+                    const key = encodeURIComponent(v.name);
+                    const chk = checkedBefore.indexOf(key) !== -1 ? ' checked' : '';
+                    return '<div><label><input type="checkbox" class="mx-ext" value="' + key + '"' + chk + '> ' +
+                        '<b>' + esc(v.name) + '</b> <small>(nicht einsatzbereit in ' + v.count + ' Gebäuden)</small></label></div>';
+                }).join('');
+            }
+
+            $('mx-list').innerHTML = html;
+            modal.querySelectorAll('.mx-ext').forEach(c => { c.onchange = updateSummary; });
+            $('mx-actions').style.display = 'block';
+            updateSummary();
+        }
+
+        // ---------- Jobs & Summe ----------
+        function selectedValues() {
+            return Array.prototype.map.call(modal.querySelectorAll('.mx-ext:checked'), c => c.value);
+        }
+
+        function selectedJobs() {
+            const ids = selectedValues();
+            const jobs = [];
+            activeScanned().forEach(s => s.links.forEach(l => {
+                if (ids.indexOf(l.extId) !== -1) jobs.push({ b: s.b, l: l });
+            }));
+            return jobs;
+        }
+
+        function selectedActJobs() {
+            const names = selectedValues().map(decodeURIComponent);
+            const jobs = [];
+            activeScanned().forEach(s => s.acts.forEach(a => {
+                if (names.indexOf(a.name) !== -1) jobs.push({ b: s.b, a: a });
+            }));
+            return jobs;
+        }
+
+        function updateSummary() {
+            const isBuild = mode === 'build';
+            $('mx-refresh').style.display = isBuild ? '' : 'none';
+            $('mx-build').style.display = isBuild ? '' : 'none';
+            $('mx-act').style.display = isBuild ? 'none' : '';
+
+            if (!isBuild) {
+                const jobs = selectedActJobs();
+                $('mx-summary').innerHTML = jobs.length
+                    ? 'Einsatzbereit setzen: <b>' + jobs.length + '</b> Erweiterungen in <b>' + new Set(jobs.map(j => j.b.id)).size +
+                      '</b> Gebäuden (<b>' + new Set(jobs.map(j => lsKey(j.b))).size + '</b> Leitstellen)'
+                    : 'Nichts ausgewählt.';
+                $('mx-act').disabled = !jobs.length;
+                return;
+            }
+
+            const jobs = selectedJobs();
+            const unknown = jobs.some(j => isNaN(j.l.cost));
+            const total = jobs.reduce((s, j) => s + (isNaN(j.l.cost) ? 0 : j.l.cost), 0);
+            const buildingsCount = new Set(jobs.map(j => j.b.id)).size;
+            const lsCount = new Set(jobs.map(j => lsKey(j.b))).size;
+            const creditsTxt = credits === null ? '<span style="color:red">unbekannt</span>' : fmt(credits) + ' Credits';
+
+            let state = '';
+            let canBuild = false;
+            if (!jobs.length) {
+                state = 'Nichts ausgewählt.';
+            } else if (unknown) {
+                state = '<b style="color:red">⚠ Für mindestens eine Erweiterung ist der Preis unbekannt – Bauen gesperrt.</b>';
+            } else if (credits === null) {
+                state = '<b style="color:red">⚠ Credit-Stand unbekannt – Bauen gesperrt. „Credits aktualisieren“ klicken.</b>';
+            } else if (total > credits) {
+                state = '<b style="color:red">✖ Zu wenig Credits – es fehlen ' + fmt(total - credits) + ' Credits.</b>';
+            } else {
+                state = '<b style="color:green">✔ Ausreichend Credits – danach bleiben ' + fmt(credits - total) + ' übrig.</b>';
+                canBuild = true;
+            }
+
+            $('mx-summary').innerHTML =
+                'Ausbauten: <b>' + jobs.length + '</b> in <b>' + buildingsCount + '</b> Gebäuden (<b>' + lsCount + '</b> Leitstellen)<br>' +
+                'Gesamtkosten: <b>' + fmt(total) + ' Credits</b><br>' +
+                'Dein Guthaben: <b>' + creditsTxt + '</b><br>' + state;
+            $('mx-build').disabled = !canBuild;
+        }
+
+        $('mx-refresh').onclick = refreshCredits;
+
+        // ---------- Bauen ----------
+        $('mx-build').onclick = async () => {
+            await refreshCredits();
+            const jobs = selectedJobs();
+            if (!jobs.length) { alert('Nichts ausgewählt.'); return; }
+            if (jobs.some(j => isNaN(j.l.cost)) || credits === null) { alert('Preis oder Credit-Stand unbekannt.'); return; }
+
+            const total = jobs.reduce((s, j) => s + j.l.cost, 0);
+            if (total > credits) { alert('Zu wenig Credits! Benötigt: ' + fmt(total) + ', vorhanden: ' + fmt(credits) + '.'); return; }
+            if (!confirm(jobs.length + ' Ausbauten in ' + new Set(jobs.map(j => j.b.id)).size +
+                ' Gebäuden (' + new Set(jobs.map(j => lsKey(j.b))).size + ' Leitstellen) für ' + fmt(total) + ' Credits starten?')) return;
+
+            $('mx-build').disabled = true;
+            let ok = 0, fail = 0, remaining = credits;
+            const okJobs = [];
+            for (let i = 0; i < jobs.length; i++) {
+                if (!alive) break;   // Modul wurde ausgeschaltet
+                const b = jobs[i].b;
+                const l = jobs[i].l;
+                if (l.cost > remaining) {
+                    log('⏹ Abbruch: nicht genug Credits für ' + b.caption + ': ' + l.name);
+                    fail += jobs.length - i;
+                    break;
+                }
+                $('mx-status').textContent = 'Baue ' + (i + 1) + '/' + jobs.length + '…';
+                try {
+                    // POST wird nur bei HTTP 429 wiederholt (nicht bei 5xx), damit nichts doppelt gebaut wird
+                    const res = await fetchRetry(l.href, {
+                        method: 'POST',
+                        credentials: 'same-origin',
+                        headers: { 'X-CSRF-Token': csrf(), 'X-Requested-With': 'XMLHttpRequest' }
+                    }, false);
+                    if (res.ok) {
+                        ok++;
+                        remaining -= l.cost;
+                        okJobs.push(jobs[i]);
+                        log('✔ ' + b.caption + ': ' + l.name + ' (' + fmt(l.cost) + ' Credits)');
+                    } else {
+                        fail++;
+                        log('✖ ' + b.caption + ': ' + l.name + ' (HTTP ' + res.status + ')');
+                    }
+                } catch (e) {
+                    fail++;
+                    log('✖ ' + b.caption + ': ' + l.name + ' (' + e + ')');
+                }
+                await sleep(400);
+            }
+
+            // Gebaute Erweiterungen aus Liste und Cache entfernen
+            okJobs.forEach(function (j) {
+                delete cache[j.b.id];
+                scanned.forEach(function (s) {
+                    if (s.b.id === j.b.id) s.links = s.links.filter(function (x) { return x.extId !== j.l.extId; });
+                });
+            });
+            saveCache();
+
+            $('mx-status').textContent = 'Fertig: ' + ok + ' gestartet, ' + fail + ' fehlgeschlagen/übersprungen.';
+            renderList();
+            await refreshCredits();
+        };
+
+        // ---------- Einsatzbereit setzen ----------
+        $('mx-act').onclick = async () => {
+            const jobs = selectedActJobs();
+            if (!jobs.length) { alert('Nichts ausgewählt.'); return; }
+            if (!confirm(jobs.length + ' Erweiterungen in ' + new Set(jobs.map(j => j.b.id)).size +
+                ' Gebäuden (' + new Set(jobs.map(j => lsKey(j.b))).size + ' Leitstellen) auf „Einsatzbereit“ setzen?')) return;
+
+            $('mx-act').disabled = true;
+            let ok = 0, fail = 0;
+            const okJobs = [];
+            log('Methode/Link des ersten Auftrags: ' + jobs[0].a.method.toUpperCase() + ' ' + jobs[0].a.href);
+
+            for (let i = 0; i < jobs.length; i++) {
+                if (!alive) break;   // Modul wurde ausgeschaltet
+                const b = jobs[i].b;
+                const a = jobs[i].a;
+                $('mx-status').textContent = 'Setze einsatzbereit ' + (i + 1) + '/' + jobs.length + '…';
+                try {
+                    const opts = {
+                        credentials: 'same-origin',
+                        headers: { 'X-CSRF-Token': csrf(), 'X-Requested-With': 'XMLHttpRequest' }
+                    };
+                    if (a.method !== 'get') opts.method = a.method.toUpperCase();
+                    const res = await fetchRetry(a.href, opts, false);
+                    if (res.ok) {
+                        ok++;
+                        okJobs.push(jobs[i]);
+                        log('✔ ' + b.caption + ': ' + a.name);
+                    } else {
+                        fail++;
+                        log('✖ ' + b.caption + ': ' + a.name + ' (HTTP ' + res.status + ')');
+                    }
+                } catch (e) {
+                    fail++;
+                    log('✖ ' + b.caption + ': ' + a.name + ' (' + e + ')');
+                }
+                await sleep(300);
+            }
+
+            okJobs.forEach(function (j) {
+                delete cache[j.b.id];
+                scanned.forEach(function (s) {
+                    if (s.b.id === j.b.id) s.acts = s.acts.filter(function (x) { return x.href !== j.a.href; });
+                });
+            });
+            saveCache();
+
+            $('mx-status').textContent = 'Fertig: ' + ok + ' einsatzbereit gesetzt, ' + fail + ' fehlgeschlagen.';
+            renderList();
+        };
+    }
+        },
+    });
+
+
     // ======================================================================
     // NEUES MODUL HINZUFÜGEN – Vorlage (einfach kopieren und ausfüllen):
     //
