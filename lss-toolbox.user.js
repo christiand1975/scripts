@@ -16,7 +16,7 @@
     // ======================================================================
     // KONFIGURATION – hier deine Werte eintragen
     // ======================================================================
-    const VERSION = '2.2.1';      // muss zur @version im Header passen
+    const VERSION = '2.3.0';      // muss zur @version im Header passen
     const CONFIG = {
         // Adresse der veröffentlichten .user.js, z. B.
         // 'https://raw.githubusercontent.com/DEINNAME/lss-toolbox/main/lss-toolbox.user.js'
@@ -48,7 +48,7 @@
     const isEnabled = mod => store.get('enabled.' + mod.id, mod.defaultEnabled !== false);
 
     // Jedes Modul bekommt einen eigenen Kontext. Alles, was darüber registriert wird
-    // (Listener, Timer, Styles), wird beim Ausschalten automatisch wieder entfernt.
+    // (Listener, Timer, Styles), wird beim Ausschalten automatisch wieder entfernt..
     function createContext(mod) {
         const cleanups = [];
         const tag = `[LSS-Toolbox:${mod.id}]`;
