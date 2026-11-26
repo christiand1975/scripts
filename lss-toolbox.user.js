@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         LSS Toolbox
 // @namespace    lss-toolbox
-// @version      2.3.1
-// @description  Bündelt mehrere Leitstellenspiel-Helfer als einzeln schaltbare Module (Fahrzeug-Abgleich, Ausbildungscheck, Personal-Übersicht, MissionShare, Maasenausbau, Lehrgangszuweiser)
+// @version      2.3.2
+// @description  BÃ¼ndelt mehrere Leitstellenspiel-Helfer als einzeln schaltbare Module (Fahrzeug-Abgleich, Ausbildungscheck, Personal-Ãœbersicht, MissionShare, Maasenausbau, Lehrgangszuweiser)
 // @match        https://www.leitstellenspiel.de/*
 // @run-at       document-idle
 // @updateURL    https://raw.githubusercontent.com/christiand1975/scripts/main/lss-toolbox.user.js
@@ -14,11 +14,11 @@
     'use strict';
 
     // ======================================================================
-    // KONFIGURATION – hier deine Werte eintragen
+    // KONFIGURATION â€“ hier deine Werte eintragen
     // ======================================================================
-    const VERSION = '2.3.1';      // muss zur @version im Header passen
+    const VERSION = '2.3.2';      // muss zur @version im Header passen
     const CONFIG = {
-        // Adresse der veröffentlichten .user.js, z. B.
+        // Adresse der verÃ¶ffentlichten .user.js, z. B.
         // 'https://raw.githubusercontent.com/DEINNAME/lss-toolbox/main/lss-toolbox.user.js'
         // Gesetzt: Toolbox meldet im Panel, wenn dort eine neuere @version liegt. '' = aus.
         updateUrl: 'https://raw.githubusercontent.com/christiand1975/scripts/main/lss-toolbox.user.js',
@@ -32,7 +32,7 @@
     const modules = [];
     const running = new Map();                 // id -> { ctx, cleanups, instance }
 
-    // Einstellungen im localStorage (gilt für alle Frames derselben Domain)
+    // Einstellungen im localStorage (gilt fÃ¼r alle Frames derselben Domain)
     const store = {
         get(key, def) {
             try {
@@ -47,7 +47,7 @@
 
     const isEnabled = mod => store.get('enabled.' + mod.id, mod.defaultEnabled !== false);
 
-    // Jedes Modul bekommt einen eigenen Kontext. Alles, was darüber registriert wird
+    // Jedes Modul bekommt einen eigenen Kontext. Alles, was darÃ¼ber registriert wird
     // (Listener, Timer, Styles), wird beim Ausschalten automatisch wieder entfernt..
     function createContext(mod) {
         const cleanups = [];
@@ -62,7 +62,7 @@
             get: (key, def) => store.get(`${mod.id}.${key}`, def),
             set: (key, val) => store.set(`${mod.id}.${key}`, val),
 
-            // Aufräum-Helfer
+            // AufrÃ¤um-Helfer
             onCleanup(fn) { cleanups.push(fn); },
             on(target, type, handler, opts) {
                 target.addEventListener(type, handler, opts);
@@ -97,7 +97,7 @@
             ctx.log('gestartet');
         } catch (e) {
             ctx.error('Fehler beim Start:', e);
-            stopModule(mod);   // schon Registriertes wieder aufräumen
+            stopModule(mod);   // schon Registriertes wieder aufrÃ¤umen
         }
     }
 
@@ -108,20 +108,20 @@
         try { if (typeof mod.destroy === 'function') mod.destroy(entry.instance, entry.ctx); }
         catch (e) { entry.ctx.error('Fehler in destroy():', e); }
         while (entry.cleanups.length) {
-            try { entry.cleanups.pop()(); } catch (e) { entry.ctx.error('Fehler beim Aufräumen:', e); }
+            try { entry.cleanups.pop()(); } catch (e) { entry.ctx.error('Fehler beim AufrÃ¤umen:', e); }
         }
         entry.ctx.log('gestoppt');
     }
 
     function register(mod) {
         if (!mod || !mod.id || typeof mod.init !== 'function') {
-            console.error('[LSS-Toolbox] Ungültiges Modul', mod);
+            console.error('[LSS-Toolbox] UngÃ¼ltiges Modul', mod);
             return;
         }
         modules.push(mod);
     }
 
-    // Schalter, die in einem anderen Frame/Tab umgelegt wurden, auch hier übernehmen
+    // Schalter, die in einem anderen Frame/Tab umgelegt wurden, auch hier Ã¼bernehmen
     window.addEventListener('storage', e => {
         const key = `${PREFIX}.enabled.`;
         if (!e.key || !e.key.startsWith(key)) return;
@@ -131,12 +131,12 @@
     });
 
     // ----------------------------------------------------------------------
-    // Steuer-UI: nur als Eintrag im Spielmenü (direkt unter "Notizen").
-    // Nichts schwebt auf der Seite; das Panel öffnet sich erst per Klick auf den Menüeintrag.
+    // Steuer-UI: nur als Eintrag im SpielmenÃ¼ (direkt unter "Notizen").
+    // Nichts schwebt auf der Seite; das Panel Ã¶ffnet sich erst per Klick auf den MenÃ¼eintrag.
     // ----------------------------------------------------------------------
     const panelApi = {};
     let updateRemote = null;
-    const menuLabel = () => (updateRemote ? '🛠 Toolbox ⬆' : '🛠 Toolbox');
+    const menuLabel = () => (updateRemote ? 'ðŸ›  Toolbox â¬†' : 'ðŸ›  Toolbox');
 
     function findNotesLink() {
         const byHref = document.querySelector('a[href="/note"], a[href="/notes"], a[href^="/note?"]');
@@ -153,7 +153,7 @@
         const link = document.createElement('a');
         link.id = 'lsstb-menu-link';
         link.href = '#';
-        // Klassen des Notizen-Eintrags übernehmen (gleiches Aussehen), aber nicht die Lightbox-Klassen des Spiels
+        // Klassen des Notizen-Eintrags Ã¼bernehmen (gleiches Aussehen), aber nicht die Lightbox-Klassen des Spiels
         link.className = [...notes.classList].filter(c => !/lightbox/i.test(c)).join(' ');
         link.textContent = menuLabel();
         link.addEventListener('click', e => {
@@ -200,12 +200,12 @@
         const head = document.createElement('div');
         head.className = 'lsstb-head';
         const title = document.createElement('h4');
-        title.textContent = 'LSS Toolbox – Module';
+        title.textContent = 'LSS Toolbox â€“ Module';
         const closeBtn = document.createElement('button');
         closeBtn.type = 'button';
         closeBtn.className = 'lsstb-x';
-        closeBtn.textContent = '×';
-        closeBtn.title = 'Schließen';
+        closeBtn.textContent = 'Ã—';
+        closeBtn.title = 'SchlieÃŸen';
         head.append(title, closeBtn);
         panel.append(head);
 
@@ -219,7 +219,7 @@
                 cb.checked ? startModule(mod) : stopModule(mod);
             });
             label.append(cb, ' ', mod.name || mod.id);
-            const info = [mod.description, mod.where ? 'Aktiv auf: ' + mod.where : ''].filter(Boolean).join(' · ');
+            const info = [mod.description, mod.where ? 'Aktiv auf: ' + mod.where : ''].filter(Boolean).join(' Â· ');
             if (info) {
                 const s = document.createElement('small');
                 s.textContent = info;
@@ -230,7 +230,7 @@
 
         const foot = document.createElement('div');
         foot.className = 'lsstb-foot';
-        foot.textContent = 'Änderungen wirken sofort, auch in offenen Einsatzfenstern.';
+        foot.textContent = 'Ã„nderungen wirken sofort, auch in offenen Einsatzfenstern.';
         const ver = document.createElement('div');
         ver.id = 'lsstb-ver';
         ver.className = 'lsstb-foot';
@@ -249,24 +249,24 @@
         panelApi.open = open;
         panelApi.close = close;
 
-        // Menüeintrag einsetzen; das Menü kann später geladen oder neu aufgebaut werden -> regelmäßig nachsehen
+        // MenÃ¼eintrag einsetzen; das MenÃ¼ kann spÃ¤ter geladen oder neu aufgebaut werden -> regelmÃ¤ÃŸig nachsehen
         let misses = 0;
         ensureMenuItem();
         setInterval(() => {
             if (ensureMenuItem()) { misses = 0; return; }
             if (++misses === 15) {
-                console.warn('[LSS-Toolbox] Menüeintrag "Notizen" nicht gefunden – Toolbox-Menüpunkt kann nicht eingefügt werden. Notfalls im Konsolenfenster: LSSToolbox.open()');
+                console.warn('[LSS-Toolbox] MenÃ¼eintrag "Notizen" nicht gefunden â€“ Toolbox-MenÃ¼punkt kann nicht eingefÃ¼gt werden. Notfalls im Konsolenfenster: LSSToolbox.open()');
             }
         }, 2000);
     }
 
     // ======================================================================
-    // MODUL 1: Fahrzeug-Abgleich (benötigt vs. unterwegs)
+    // MODUL 1: Fahrzeug-Abgleich (benÃ¶tigt vs. unterwegs)
     // ======================================================================
     register({
         id: 'fahrzeug-abgleich',
         name: 'Fahrzeug-Abgleich',
-        description: 'Zeigt pro Anforderung: fehlt / Anfahrt / vor Ort / gewählt.',
+        description: 'Zeigt pro Anforderung: fehlt / Anfahrt / vor Ort / gewÃ¤hlt.',
         where: 'Einsatzfenster',
         match: loc => loc.pathname.startsWith('/missions/'),
 
@@ -279,31 +279,31 @@
     const LANG = 'de_DE';          // Sprache der Typnamen (LSSM-API)
     const HIDE_ORIGINAL = false;
 
-    // Zuordnung Anforderung -> Fahrzeugtyp (nur nötig, wenn Namen nicht gleich lauten).
+    // Zuordnung Anforderung -> Fahrzeugtyp (nur nÃ¶tig, wenn Namen nicht gleich lauten).
     // Die erste passende Regel entscheidet.
     const RULES = [
         { req: /(funkstreifenwagen|fustw).*(dienstgruppen|dgl)/i, veh: /(fustw|funkstreifenwagen|streifenwagen).*(dgl|dienstgruppen)/i },
         { req: /drehleiter/i,            veh: /^(DLK|DL |Drehleiter)/i },
-        { req: /rüstwagen|ruestwagen/i,  veh: /^(RW|Rüstwagen)/i },
+        { req: /rÃ¼stwagen|ruestwagen/i,  veh: /^(RW|RÃ¼stwagen)/i },
         { req: /rettungswagen|^rtw$/i,   veh: /^(RTW|Rettungswagen)/i },
         { req: /notarzt|^nef$/i,         veh: /^(NEF|NAW|Notarzt)/i },
         { req: /krankentransport|ktw/i,  veh: /^(KTW|Krankentransport)/i },
         { req: /elw ?1|einsatzleit/i,    veh: /^ELW ?1/i },
         { req: /elw ?2/i,                veh: /^ELW ?2/i },
-        { req: /gw-?öl|gw-?oel/i,        veh: /^GW-?(Öl|Oel)/i },
+        { req: /gw-?Ã¶l|gw-?oel/i,        veh: /^GW-?(Ã–l|Oel)/i },
         { req: /gw-?atemschutz/i,        veh: /^GW-?Atemschutz/i },
         { req: /gw-?messtechnik/i,       veh: /^GW-?Messtechnik/i },
         { req: /gw-?gefahrgut/i,         veh: /^GW-?Gefahrgut/i },
         { req: /schlauch/i,              veh: /^(GW-?Schlauch|SW)/i },
         { req: /streifenwagen|fustw/i,   veh: /^(Streifenwagen|FuStW)(?!.*(DGL|Dienstgruppen))/i },
         { req: /wasserwerfer/i,      veh: /^(WaWe|Wasserwerfer)/i },
-        { req: /löschfahrzeug|loeschfahrzeug|\blf\b|hlf/i, veh: /^(LF|HLF|TLF|TSF|KLF|MLF|StLF)/i },
+        { req: /lÃ¶schfahrzeug|loeschfahrzeug|\blf\b|hlf/i, veh: /^(LF|HLF|TLF|TSF|KLF|MLF|StLF)/i },
     ];
 
     // <pure>
     const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
     const splitItems = t => t.split(/,(?![^(]*\))/).map(s => s.trim()).filter(Boolean);
-    const fold = s => s.toLowerCase().replace(/ä/g,'a').replace(/ö/g,'o').replace(/ü/g,'u').replace(/ß/g,'ss')
+    const fold = s => s.toLowerCase().replace(/Ã¤/g,'a').replace(/Ã¶/g,'o').replace(/Ã¼/g,'u').replace(/ÃŸ/g,'ss')
         .replace(/[^a-z0-9]+/g, ' ').trim();
 
     function parseRequired(text) {
@@ -317,7 +317,7 @@
         });
     }
 
-    // Wie gut passt ein Fahrzeugtyp zu einer Anforderung? 3 = exakt, 2 = Regel, 1 = Namensähnlichkeit, 0 = nein
+    // Wie gut passt ein Fahrzeugtyp zu einer Anforderung? 3 = exakt, 2 = Regel, 1 = NamensÃ¤hnlichkeit, 0 = nein
     function scoreAlt(req, veh) {
         const a = fold(req), b = fold(veh);
         if (!a || !b) return 0;
@@ -334,24 +334,24 @@
         return best;
     };
 
-    // Fahrzeugtypen, die zusätzlich eine andere Anforderung erfüllen dürfen (nur mit Überschuss, nur in diese Richtung)
+    // Fahrzeugtypen, die zusÃ¤tzlich eine andere Anforderung erfÃ¼llen dÃ¼rfen (nur mit Ãœberschuss, nur in diese Richtung)
     const SUBSTITUTES = [
         { veh: /^ELW ?2/i, covers: /^ELW ?1\b/i },   // ELW 2 ersetzt ELW 1, ein ELW 1 aber keinen ELW 2
     ];
 
-    // Fahrzeugtypen, die gleichzeitig für mehrere Anforderungen zählen (kein Entweder-oder):
-    // jedes HLF (10, 20, Schiene …) zählt sofort als LF und als RW
+    // Fahrzeugtypen, die gleichzeitig fÃ¼r mehrere Anforderungen zÃ¤hlen (kein Entweder-oder):
+    // jedes HLF (10, 20, Schiene â€¦) zÃ¤hlt sofort als LF und als RW
     const MULTI = [
-        { veh: /^HLF/i, covers: [/^(löschfahrzeug|loeschfahrzeug|lf\b)/i, /^(rüstwagen|ruestwagen|rw\b)/i] },
+        { veh: /^HLF/i, covers: [/^(lÃ¶schfahrzeug|loeschfahrzeug|lf\b)/i, /^(rÃ¼stwagen|ruestwagen|rw\b)/i] },
     ];
 
-    // Jedes Fahrzeug genau einer Anforderung zuordnen (beste Übereinstimmung), danach Ersatz-Regeln anwenden
+    // Jedes Fahrzeug genau einer Anforderung zuordnen (beste Ãœbereinstimmung), danach Ersatz-Regeln anwenden
     function assign(rows, vehicles) {
         const extra = [];
         rows.forEach(r => { r.list = []; });
         vehicles.forEach(v => {
             const multi = MULTI.find(m => m.veh.test(v.name));
-            if (multi) {                                   // zählt in allen passenden Zeilen
+            if (multi) {                                   // zÃ¤hlt in allen passenden Zeilen
                 let any = false;
                 rows.forEach(r => {
                     if (multi.covers.some(rx => rx.test(r.name)) || score(r.name, v.name) > 0) { r.list.push(v); any = true; }
@@ -364,7 +364,7 @@
             if (best > -1) rows[best].list.push(v); else extra.push(v);
         });
 
-        // Bereits eingetroffene Fahrzeuge zieht das Spiel selbst ab, nur Anfahrt/Auswahl zählt hier
+        // Bereits eingetroffene Fahrzeuge zieht das Spiel selbst ab, nur Anfahrt/Auswahl zÃ¤hlt hier
         const counted = r => r.list.filter(v => v.state !== 'atSite').length;
         SUBSTITUTES.forEach(sub => {
             rows.forEach(target => {
@@ -375,7 +375,7 @@
                 // 1) Fahrzeuge ohne eigene Anforderung
                 extra.filter(v => v.state !== 'atSite' && sub.veh.test(v.name)).forEach(v => { if (need > 0) move(extra, v); });
 
-                // 2) Überschuss aus anderen Zeilen (über deren eigenen Bedarf hinaus)
+                // 2) Ãœberschuss aus anderen Zeilen (Ã¼ber deren eigenen Bedarf hinaus)
                 rows.forEach(o => {
                     if (o === target || need <= 0) return;
                     let spare = counted(o) - o.missing;
@@ -386,7 +386,7 @@
             });
         });
 
-        // Zähler aus den zugeordneten Fahrzeugen bilden
+        // ZÃ¤hler aus den zugeordneten Fahrzeugen bilden
         rows.forEach(r => {
             r.driving = r.list.filter(v => v.state === 'driving').length;
             r.atSite  = r.list.filter(v => v.state === 'atSite').length;
@@ -396,7 +396,7 @@
     }
     // </pure>
 
-    // ---------- Daten (alles aus dem HTML, keine API nötig) ----------
+    // ---------- Daten (alles aus dem HTML, keine API nÃ¶tig) ----------
     const missionId = (location.pathname.match(/\/missions\/(\d+)/) || [])[1];
 
     const looksLikeType = t => !!t && !/^[\d.,:\s]+\s*(km|m|min|h)?$/i.test(t);
@@ -511,7 +511,7 @@
             loadTypeNames().then(() => { if (!hadNames && typeNames.size) schedule(); });   // nicht darauf warten
             const vehicles = collectVehicles();
 
-            // Anforderungen merken: erfüllte verschwinden aus dem Spieltext, sollen hier aber stehen bleiben (Fehlt 0)
+            // Anforderungen merken: erfÃ¼llte verschwinden aus dem Spieltext, sollen hier aber stehen bleiben (Fehlt 0)
             const KEY = 'lssAbgleichReq_' + missionId;
             let seen = [];
             try { seen = JSON.parse(sessionStorage.getItem(KEY) || '[]'); } catch (e) { /* ignorieren */ }
@@ -530,18 +530,18 @@
             const unnamed = vehicles.filter(v => v.state === 'sel' && v.name === '?').length;
             const ticked = document.querySelectorAll('input[type="checkbox"]:checked').length;
             const warn = unnamed
-                ? `⚠ ${unnamed} angehakte Fahrzeuge ohne Typnamen (Namensliste von api.lss-manager.de nicht geladen)`
-                : (ticked && !count('sel') ? `⚠ ${ticked} Haken gesetzt, aber keine Fahrzeug-Checkbox erkannt` : '');
+                ? `âš  ${unnamed} angehakte Fahrzeuge ohne Typnamen (Namensliste von api.lss-manager.de nicht geladen)`
+                : (ticked && !count('sel') ? `âš  ${ticked} Haken gesetzt, aber keine Fahrzeug-Checkbox erkannt` : '');
             // Wie im LSSM: "Fehlt" = Spieltext (Eingetroffene sind dort schon abgezogen, Anfahrende nicht).
-            // Rest = Fehlt - Anfahrt - Gewählt
+            // Rest = Fehlt - Anfahrt - GewÃ¤hlt
             const restOf = r => Math.max(0, r.missing - r.driving - r.sel);
             const uniq = new Set();
-            rows.forEach(r => r.list.forEach(v => uniq.add(v)));          // ein HLF in LF- und RW-Zeile zählt in der Summe einmal
+            rows.forEach(r => r.list.forEach(v => uniq.add(v)));          // ein HLF in LF- und RW-Zeile zÃ¤hlt in der Summe einmal
             const sum = st => [...uniq].filter(v => v.state === st).length;
             const restTotal = rows.reduce((t, r) => t + restOf(r), 0);
             const tableHtml = list => `
                 <table>
-                    <thead><tr><th>Fahrzeug</th><th class="n">Fehlt</th><th class="n">Anfahrt</th><th class="n">Vor Ort</th><th class="n">Gewählt</th><th class="n">Rest</th></tr></thead>
+                    <thead><tr><th>Fahrzeug</th><th class="n">Fehlt</th><th class="n">Anfahrt</th><th class="n">Vor Ort</th><th class="n">GewÃ¤hlt</th><th class="n">Rest</th></tr></thead>
                     <tbody>
                         ${list.map(r => `<tr>
                             <td>${esc(r.name)}</td>
@@ -576,7 +576,7 @@
                     <div>${tableHtml(rows.slice(0, split))}</div>
                     ${split < rows.length ? `<div>${tableHtml(rows.slice(split))}</div>` : ''}
                 </div>
-                <div class="sum">Summe: <span class="miss">${totalMissing} fehlen</span> · ${sum('driving')} Anfahrt · ${sum('atSite')} vor Ort · ${sum('sel')} gewählt · <span class="${restTotal ? 'miss' : 'ok'}">Rest ${restTotal}</span></div>`
+                <div class="sum">Summe: <span class="miss">${totalMissing} fehlen</span> Â· ${sum('driving')} Anfahrt Â· ${sum('atSite')} vor Ort Â· ${sum('sel')} gewÃ¤hlt Â· <span class="${restTotal ? 'miss' : 'ok'}">Rest ${restTotal}</span></div>`
                 : `<div class="ok">Nichts fehlt mehr.</div>`}
                 ${warn ? `<div class="warn">${esc(warn)}</div>` : ''}
             `;
@@ -589,8 +589,8 @@
         }
     }
 
-    // ---------- Auslöser ----------
-    // Kein MutationObserver: Spiel und LSSM ändern das DOM ständig, ein verzögerter Neuaufbau käme nie dran.
+    // ---------- AuslÃ¶ser ----------
+    // Kein MutationObserver: Spiel und LSSM Ã¤ndern das DOM stÃ¤ndig, ein verzÃ¶gerter Neuaufbau kÃ¤me nie dran.
     // Stattdessen alle 500 ms eine Kennung (Haken + Anforderungstext + Fahrzeuglinks) vergleichen.
     function signature() {
         const src = document.getElementById(SOURCE_ID);
@@ -601,7 +601,7 @@
         ].join('|');
     }
 
-    // Feste Verzögerung (kein Zurücksetzen bei weiteren Änderungen)
+    // Feste VerzÃ¶gerung (kein ZurÃ¼cksetzen bei weiteren Ã„nderungen)
     function schedule() {
         if (!alive) return;
         if (!timer) timer = setTimeout(() => { timer = null; render(); }, 250);
@@ -621,7 +621,7 @@
         if (sig !== lastSig) { lastSig = sig; render(); }
     }, 500);
 
-    // Aufräumen beim Ausschalten
+    // AufrÃ¤umen beim Ausschalten
     ctx.onCleanup(() => {
         alive = false;
         clearTimeout(timer);
@@ -637,13 +637,13 @@
     });
 
     // ======================================================================
-    // MODUL 2: Ausbildungscheck – Fahrzeugkauf
+    // MODUL 2: Ausbildungscheck â€“ Fahrzeugkauf
     // ======================================================================
     register({
         id: 'ausbildungscheck',
         name: 'Ausbildungscheck (Fahrzeugkauf)',
         description: 'Ausbildungsstand der Wache auf der Kaufseite, FZG rot bei zu wenig Personal.',
-        where: '/buildings/…/vehicles/new',
+        where: '/buildings/â€¦/vehicles/new',
         match: loc => /^\/buildings\/\d+\/vehicles\/new/.test(loc.pathname),
 
         init(ctx) {
@@ -734,17 +734,17 @@
     if (!pathMatch) return;
     const buildingId = pathMatch[1];
 
-    // ── Box oben einfügen ──────────────────────────────────────────────
+    // â”€â”€ Box oben einfÃ¼gen â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     const box = document.createElement('div');
     box.id = 'lss-ausbildungscheck';
     box.innerHTML = `
         <h4>
-            🎓 Ausbildungscheck
+            ðŸŽ“ Ausbildungscheck
             <span id="lss-ac-sub">Lade...</span>
-            <button id="lss-ac-refresh" type="button" style="background:#12122a;border:1px solid #3d3d7a;color:#90caf9;border-radius:5px;padding:2px 10px;cursor:pointer;font-size:12px;margin-left:8px;">↺ Aktualisieren</button>
-            <button id="lss-ac-toggle" type="button">▲ einklappen</button>
+            <button id="lss-ac-refresh" type="button" style="background:#12122a;border:1px solid #3d3d7a;color:#90caf9;border-radius:5px;padding:2px 10px;cursor:pointer;font-size:12px;margin-left:8px;">â†º Aktualisieren</button>
+            <button id="lss-ac-toggle" type="button">â–² einklappen</button>
         </h4>
-        <div id="lss-edu-grid"><span class="lss-loading">⏳ Lade Personal...</span></div>
+        <div id="lss-edu-grid"><span class="lss-loading">â³ Lade Personal...</span></div>
     `;
     const insertTarget =
         document.querySelector('h1')?.parentElement ||
@@ -752,7 +752,7 @@
         document.body;
     insertTarget.prepend(box);
 
-    // Aufräumen beim Ausschalten
+    // AufrÃ¤umen beim Ausschalten
     ctx.onCleanup(() => {
         alive = false;
         if (observer) observer.disconnect();
@@ -765,39 +765,39 @@
     document.getElementById('lss-ac-toggle').addEventListener('click', () => {
         collapsed = !collapsed;
         document.getElementById('lss-edu-grid').classList.toggle('collapsed', collapsed);
-        document.getElementById('lss-ac-toggle').textContent = collapsed ? '▼ ausklappen' : '▲ einklappen';
+        document.getElementById('lss-ac-toggle').textContent = collapsed ? 'â–¼ ausklappen' : 'â–² einklappen';
     });
 
     document.getElementById('lss-ac-refresh').addEventListener('click', () => {
-        document.getElementById('lss-edu-grid').innerHTML = '<span class="lss-loading">⏳ Aktualisiere...</span>';
-        // FZG-Badges zurücksetzen damit sie neu gezeichnet werden
+        document.getElementById('lss-edu-grid').innerHTML = '<span class="lss-loading">â³ Aktualisiere...</span>';
+        // FZG-Badges zurÃ¼cksetzen damit sie neu gezeichnet werden
         document.querySelectorAll('.lss-fzg-badge').forEach(b => b.remove());
         document.querySelectorAll('a[data-lss-checked]').forEach(a => delete a.dataset.lssChecked);
         ladeDaten();
     });
 
-    // ── Fehlende LSSM-Schooling-Einträge ──────────────────────────────
+    // â”€â”€ Fehlende LSSM-Schooling-EintrÃ¤ge â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     // Manche FZG haben in LSSM schooling:null obwohl sie Ausbildung brauchen
-    // Format: vehicle_type → { eduName (LSS-Personalname), min }
+    // Format: vehicle_type â†’ { eduName (LSS-Personalname), min }
     const MISSING_SCHOOLING = {
         41:  { eduName: 'FGr E',                          min: 1 }, // MzGW (FGr N) = Fachgruppe Notversorgung/Elektroversorgung
         122: { eduName: 'FGr E',                          min: 1 }, // LKW 7 Lbw (FGr E)
         123: { eduName: 'Fachgruppe Wasserschaden/Pumpen',min: 1 }, // LKW 7 Lbw (FGr WP)
         65:  { eduName: 'Fachgruppe Wassergefahren',      min: 1 }, // LKW 7 Lkr 19 tm
-        93:  { eduName: 'Rettungshundeführer (THW)',       min: 1 }, // MTW-O (Fachgruppe Ortung)
+        93:  { eduName: 'RettungshundefÃ¼hrer (THW)',       min: 1 }, // MTW-O (Fachgruppe Ortung)
         124: { eduName: 'GW-Wasserrettung',                 min: 1 }, // MTW-OV (individuelle Belegung Grisu)
     };
 
-    // ── Ausbildungsname-Mapping ────────────────────────────────────────
-    // LSSM-Name → LSS-Personalname (aus schooling_personal_select)
+    // â”€â”€ Ausbildungsname-Mapping â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // LSSM-Name â†’ LSS-Personalname (aus schooling_personal_select)
     const EDU_MAP = {
         // Feuerwehr
         'GW-Messtechnik Lehrgang':          'GW-Messtechnik',
-        'Höhenrettung Lehrgang':            'GW-Höhenrettung',
+        'HÃ¶henrettung Lehrgang':            'GW-HÃ¶henrettung',
         'Wechsellader Lehrgang':            'Wechsellader',
         'GW-Taucher Lehrgang':              'GW-Taucher',
         'GW-Wasserrettung Lehrgang':        'GW-Wasserrettung',
-        'Flugfeldlöschfahrzeug-Ausbildung': 'Flugfeldlöschfahrzeug',
+        'FlugfeldlÃ¶schfahrzeug-Ausbildung': 'FlugfeldlÃ¶schfahrzeug',
         'Rettungstreppen-Ausbildung':       'Rettungstreppen',
         'Werkfeuerwehr-Ausbildung':         'Werkfeuerwehr',
         'Feuerwehr-Verpflegungseinheit':    'Feuerwehr-Verpflegungseinheit',
@@ -810,21 +810,21 @@
         'SEG - Einsatzleitung':             'Einsatzleitung (SEG)',
         'SEG - GW-San':                     'GW-San',
         'Betreuungsdienst':                 'Betreuungshelfer',
-        // (doppelter Key im Original – der spätere Eintrag gewinnt, daher nur dieser)
-        'Rettungshundeführer':              'Rettungshundeführer (SEG)',
-        'Höhenretter':                      'Höhenretter',
+        // (doppelter Key im Original â€“ der spÃ¤tere Eintrag gewinnt, daher nur dieser)
+        'RettungshundefÃ¼hrer':              'RettungshundefÃ¼hrer (SEG)',
+        'HÃ¶henretter':                      'HÃ¶henretter',
         'Einsatzleiter Bergrettung':        'Einsatzleiter Bergrettung',
         'Drohnenoperator':                  'Drohnenoperator',
         'Verpflegungshelfer':               'Verpflegungshelfer',
         'Windenoperator':                   'Windenoperator (RD)',
         'Intensivpflege':                   'Intensivpflege',
         // Polizei
-        'Zugführer (leBefKw)':              'Zugführer (Pol)',
-        'Hundertschaftsführer (FüKw)':      'Hundertschaftsführer',
+        'ZugfÃ¼hrer (leBefKw)':              'ZugfÃ¼hrer (Pol)',
+        'HundertschaftsfÃ¼hrer (FÃ¼Kw)':      'HundertschaftsfÃ¼hrer',
         'Polizeihubschrauber':              'Polizeihubschrauber',
-        'Hundeführer (Schutzhund)':         'Hundeführer',
+        'HundefÃ¼hrer (Schutzhund)':         'HundefÃ¼hrer',
         'Motorradstaffel':                  'Motorradstaffel',
-        'Brandbekämpfung':                  'Brandbekämpfung (Pol)',
+        'BrandbekÃ¤mpfung':                  'BrandbekÃ¤mpfung (Pol)',
         'Kriminalpolizei':                  'Kriminalpolizei',
         'Dienstgruppenleitung':             'Dienstgruppenleitung',
         'Reiterstaffel':                    'Reiterstaffel',
@@ -832,21 +832,21 @@
         'MEK':                              'MEK',
         'Wasserwerfer':                     'Wasserwerfer',
         'Lautsprecheroperator':             'Lautsprecheroperator',
-        // THW (LSS nutzt Abkürzungen!)
+        // THW (LSS nutzt AbkÃ¼rzungen!)
         'Zugtrupp':                                 'Zugtrupp',
-        'Fachgruppe Räumen':                        'Fachgruppe Räumen',
+        'Fachgruppe RÃ¤umen':                        'Fachgruppe RÃ¤umen',
         'Fachgruppe Wassergefahren':                'Fachgruppe Wassergefahren',
         'Fachgruppe Bergungstaucher':               'Fachgruppe Bergungstaucher',
-        'Fachgruppe Rettungshundeführer':           'Rettungshundeführer (THW)',
+        'Fachgruppe RettungshundefÃ¼hrer':           'RettungshundefÃ¼hrer (THW)',
         'Fachgruppe Wasserschaden/Pumpen':          'Fachgruppe Wasserschaden/Pumpen',
         'Fachgruppe Schwere Bergung':               'FGr SB',
         'Fachgruppe Elektroversorgung':             'FGr E',
         'Trupp Unbemannte Luftfahrtsysteme':        'Tr UL',
-        'Fachzug Führung und Kommunikation':        'Fachzug Führung und Kommunikation',
+        'Fachzug FÃ¼hrung und Kommunikation':        'Fachzug FÃ¼hrung und Kommunikation',
         // Seenotrettung
         'Seenotretter':                             'Seenotretter',
         'Hubschrauberpilot (Seenotrettung)':        'Hubschrauberpilot (Seenotrettung)',
-        'Wasserrettungsausbildung für Notfallsanitäter': 'Wasserrettungsausbildung Notfallsanitäter',
+        'Wasserrettungsausbildung fÃ¼r NotfallsanitÃ¤ter': 'Wasserrettungsausbildung NotfallsanitÃ¤ter',
         // Neu/Sonstige
         'Technik und Sicherheit':                   'Technik und Sicherheit',
         'Logistik-Verpflegung':                     'Logistik-Verpflegung',
@@ -867,7 +867,7 @@
         const a = lssmName.toLowerCase().trim();
         const b = personalName.toLowerCase().trim();
         if (a === b) return true;
-        // 3. Einer enthält den anderen
+        // 3. Einer enthÃ¤lt den anderen
         if (a.includes(b) || b.includes(a)) return true;
         // 4. Bereinigter Match
         const ac = bereinige(lssmName);
@@ -877,14 +877,14 @@
     }
 
     function findePersonalName(lssmEduName, ausgebildetGesamt) {
-        // Zuerst statisches Mapping prüfen
+        // Zuerst statisches Mapping prÃ¼fen
         const mapped = EDU_MAP[lssmEduName];
         if (mapped && ausgebildetGesamt[mapped] !== undefined) return mapped;
         // Dann fuzzy
         return Object.keys(ausgebildetGesamt).find(k => matchEduName(lssmEduName, k));
     }
 
-    // ── Daten laden ────────────────────────────────────────────────────
+    // â”€â”€ Daten laden â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     function ladeDaten() {
     Promise.all([
         // 1. Wachenname
@@ -912,11 +912,11 @@
 
         // Wachennamen setzen
         document.getElementById('lss-ac-sub').textContent =
-            `– ${building.caption || 'Wache #' + buildingId}`;
+            `â€“ ${building.caption || 'Wache #' + buildingId}`;
 
-        // ── Ausbildungen aus HTML zählen ───────────────────────────────
+        // â”€â”€ Ausbildungen aus HTML zÃ¤hlen â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         const doc = new DOMParser().parseFromString(personalHtml, 'text/html');
-        const ausgebildetGesamt = {}; // eduName → Anzahl Personen
+        const ausgebildetGesamt = {}; // eduName â†’ Anzahl Personen
         let personalCount = 0;
 
         doc.querySelectorAll('[id^="school_personal_education_"]').forEach(span => {
@@ -927,9 +927,9 @@
             });
         });
 
-        // ── Gebundenes Personal durch vorhandene FZG berechnen ─────────
+        // â”€â”€ Gebundenes Personal durch vorhandene FZG berechnen â”€â”€â”€â”€â”€â”€â”€â”€â”€
         // Pro vorhandenem FZG: schooling-Ausbildung * staff.min abziehen
-        const gebunden = {}; // eduName → Anzahl gebunden
+        const gebunden = {}; // eduName â†’ Anzahl gebunden
         const nurEigene = vorhandeneFzg.filter(v => v.building_id === parseInt(buildingId));
 
         nurEigene.forEach(fzg => {
@@ -952,7 +952,7 @@
                 });
             }
 
-            // Fehlende LSSM-Einträge aus eigener Map ergänzen
+            // Fehlende LSSM-EintrÃ¤ge aus eigener Map ergÃ¤nzen
             const missing = MISSING_SCHOOLING[fzg.vehicle_type];
             if (missing) {
                 const key = missing.eduName;
@@ -962,13 +962,13 @@
             }
         });
 
-        // ── Verfügbar = Gesamt - Gebunden (min. 0) ───────────────────────
+        // â”€â”€ VerfÃ¼gbar = Gesamt - Gebunden (min. 0) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         const verfuegbar = {};
         Object.entries(ausgebildetGesamt).forEach(([edu, count]) => {
             verfuegbar[edu] = Math.max(0, count - (gebunden[edu] || 0));
         });
 
-        // ── Ausbildungs-Box rendern ────────────────────────────────────
+        // â”€â”€ Ausbildungs-Box rendern â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         const grid = document.getElementById('lss-edu-grid');
         const eintraege = Object.entries(ausgebildetGesamt)
             .filter(([, n]) => n > 0)
@@ -986,16 +986,16 @@
                 return `<div class="lss-edu-badge" title="${tooltip}">
                     <span class="lss-edu-count">${frei}</span>
                     <span>${name}</span>
-                    ${geb > 0 ? `<span style="color:#546e7a;font-size:11px;">(${gesamt}−${geb})</span>` : ''}
+                    ${geb > 0 ? `<span style="color:#546e7a;font-size:11px;">(${gesamt}âˆ’${geb})</span>` : ''}
                 </div>`;
             }).join('');
         }
 
         document.getElementById('lss-ac-sub').textContent +=
-            ` · ${personalCount} Personal · ${eintraege.length} Ausbildungsarten`;
+            ` Â· ${personalCount} Personal Â· ${eintraege.length} Ausbildungsarten`;
 
-        // ── Fahrzeug-Kaufliste markieren ───────────────────────────────
-        // FZG-Links auf der Seite haben href="/vehicles/new?type=X" oder ähnlich
+        // â”€â”€ Fahrzeug-Kaufliste markieren â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        // FZG-Links auf der Seite haben href="/vehicles/new?type=X" oder Ã¤hnlich
         // Wir warten kurz bis Tabs geladen sind und markieren dann
         markiereFahrzeuge(lssmVehicles, verfuegbar);
 
@@ -1008,14 +1008,14 @@
     .catch(err => {
         if (!alive) return;
         document.getElementById('lss-edu-grid').innerHTML =
-            `<span class="lss-error">❌ Fehler: ${err.message || err}</span>`;
+            `<span class="lss-error">âŒ Fehler: ${err.message || err}</span>`;
         console.error('[LSS Ausbildungscheck]', err);
     });
     } // end ladeDaten
 
     ladeDaten();
 
-    // ── Fahrzeuge auf der Kaufseite markieren ──────────────────────────
+    // â”€â”€ Fahrzeuge auf der Kaufseite markieren â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     function markiereFahrzeuge(lssmVehicles, verfuegbar) {
         // FZG-Kauflinks: <a href="...?type=XX"> oder data-vehicle-type
         document.querySelectorAll('a[href*="vehicle_type="], a[href*="type="]').forEach(link => {
@@ -1032,7 +1032,7 @@
             badge.className = 'lss-fzg-badge';
 
             if (!typ.schooling) {
-                // Kein Lehrgang nötig – gar kein Badge
+                // Kein Lehrgang nÃ¶tig â€“ gar kein Badge
                 return;
             } else {
                 const minPersonal = typ.staff?.min || 1;
@@ -1041,7 +1041,7 @@
 
                 Object.values(typ.schooling).forEach(lehrgaenge => {
                     Object.keys(lehrgaenge).forEach(lssmEduName => {
-                        // Fuzzy-Match für Anzeige
+                        // Fuzzy-Match fÃ¼r Anzeige
                         const personalName = Object.keys(verfuegbar).find(k => matchEduName(lssmEduName, k));
                         const anzeigeNamen = personalName || lssmEduName;
                         const frei = verfuegbar[anzeigeNamen] ?? 0;
@@ -1050,8 +1050,8 @@
                     });
                 });
 
-                badge.textContent = teile.join(' · ');
-                badge.title = teile.join('\n') + '\n(verfügbar/benötigt)';
+                badge.textContent = teile.join(' Â· ');
+                badge.title = teile.join('\n') + '\n(verfÃ¼gbar/benÃ¶tigt)';
                 if (zuWenig) badge.classList.add('lss-fzg-warn');
             }
 
@@ -1062,13 +1062,13 @@
     });
 
     // ======================================================================
-    // MODUL 3: Personal-Übersicht (Tab in der Leitstelle)
+    // MODUL 3: Personal-Ãœbersicht (Tab in der Leitstelle)
     // ======================================================================
     register({
         id: 'personal-uebersicht',
-        name: 'Personal-Übersicht',
-        description: 'Tab mit Personal, Ausbildungen und Fahrzeugbindung aller zugehörigen Wachen.',
-        where: 'Leitstellen-Seite (/buildings/…)',
+        name: 'Personal-Ãœbersicht',
+        description: 'Tab mit Personal, Ausbildungen und Fahrzeugbindung aller zugehÃ¶rigen Wachen.',
+        where: 'Leitstellen-Seite (/buildings/â€¦)',
         match: loc => /^\/buildings\/\d+$/.test(loc.pathname),
 
         init(ctx) {
@@ -1079,8 +1079,8 @@
   const TAB_ID   = 'grisu-personal-uebersicht';
   const STYLE_ID = 'grisu-personal-style';
 
-  // ─── Hilfsfunktionen ───────────────────────────────────────────────────────
-  // Gleiche Domain -> normales fetch reicht (kein GM_xmlhttpRequest nötig)
+  // â”€â”€â”€ Hilfsfunktionen â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // Gleiche Domain -> normales fetch reicht (kein GM_xmlhttpRequest nÃ¶tig)
 
   function fetchJSON(url) {
     return fetch(url, { credentials: 'same-origin' }).then(r => {
@@ -1109,7 +1109,7 @@
       .replace(/"/g, '&quot;');
   }
 
-  // ─── CSS ───────────────────────────────────────────────────────────────────
+  // â”€â”€â”€ CSS â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   function injectStyles() {
     if (document.getElementById(STYLE_ID)) return;
@@ -1199,8 +1199,8 @@
 #${TAB_ID}-panel .grisu-link     { color:#66aaff !important; text-decoration:none; }
 #${TAB_ID}-panel .grisu-link:hover { text-decoration:underline; }
 #${TAB_ID}-panel .grisu-col-name { min-width:160px; }
-#${TAB_ID}-panel .sort-asc::after  { content:' ▲'; font-size:10px; }
-#${TAB_ID}-panel .sort-desc::after { content:' ▼'; font-size:10px; }
+#${TAB_ID}-panel .sort-asc::after  { content:' â–²'; font-size:10px; }
+#${TAB_ID}-panel .sort-desc::after { content:' â–¼'; font-size:10px; }
 #${TAB_ID}-panel .grisu-detail-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
@@ -1271,7 +1271,7 @@
     s.id = STYLE_ID;
   }
 
-  // ─── Tab einfügen ──────────────────────────────────────────────────────────
+  // â”€â”€â”€ Tab einfÃ¼gen â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   function findTabContainer() {
     return document.querySelector('ul.nav-tabs');
@@ -1282,7 +1282,7 @@
     if (!ul || document.getElementById(TAB_ID + '-tab')) return false;
 
     const li = document.createElement('li');
-    li.innerHTML = `<a id="${TAB_ID}-tab" href="#${TAB_ID}-panel" data-toggle="tab">👥 Personal-Übersicht</a>`;
+    li.innerHTML = `<a id="${TAB_ID}-tab" href="#${TAB_ID}-panel" data-toggle="tab">ðŸ‘¥ Personal-Ãœbersicht</a>`;
     ul.appendChild(li);
     tabLi = li;
 
@@ -1292,7 +1292,7 @@
     const panel = document.createElement('div');
     panel.id = TAB_ID + '-panel';
     panel.className = 'tab-pane';
-    panel.innerHTML = `<p class="grisu-loading">Tab anklicken zum Laden…</p>`;
+    panel.innerHTML = `<p class="grisu-loading">Tab anklicken zum Ladenâ€¦</p>`;
     tabContent.appendChild(panel);
     tabPanel = panel;
 
@@ -1303,7 +1303,7 @@
     return true;
   }
 
-  // ─── Personal-Seite parsen ──────────────────────────────────────────────────
+  // â”€â”€â”€ Personal-Seite parsen â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   function parsePersonalsDoc(doc) {
     const rows = [...doc.querySelectorAll('#personal_table tbody tr')];
@@ -1349,10 +1349,10 @@
     return stats;
   }
 
-  // ─── Daten laden ───────────────────────────────────────────────────────────
+  // â”€â”€â”€ Daten laden â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   async function loadData(panel) {
-    panel.innerHTML = `<p class="grisu-loading">⏳ Lade Gebäudedaten…</p>`;
+    panel.innerHTML = `<p class="grisu-loading">â³ Lade GebÃ¤udedatenâ€¦</p>`;
     const buildingId = getCurrentBuildingId();
     try {
       const allBuildings = await fetchJSON('/api/buildings');
@@ -1372,12 +1372,12 @@
       });
 
       if (assigned.length === 0) {
-        panel.innerHTML = `<p class="grisu-error">Keine zugeordneten Gebäude gefunden.<br>
+        panel.innerHTML = `<p class="grisu-error">Keine zugeordneten GebÃ¤ude gefunden.<br>
           Leitstellen-ID: <code>${leitstelleId}</code></p>`;
         return;
       }
 
-      panel.innerHTML = `<p class="grisu-loading">⏳ Lade Personal… (0/${assigned.length})</p>`;
+      panel.innerHTML = `<p class="grisu-loading">â³ Lade Personalâ€¦ (0/${assigned.length})</p>`;
       const BATCH = 6;
       const results = [];
       let done = 0;
@@ -1389,11 +1389,11 @@
             const personals = parsePersonalsDoc(doc);
             done++;
             const pEl = panel.querySelector('p');
-            if (pEl) pEl.textContent = `⏳ Lade Personal… (${done}/${assigned.length})`;
-            return { id: b.id, caption: b.caption || `Gebäude #${b.id}`, personals, stats: buildStats(personals) };
+            if (pEl) pEl.textContent = `â³ Lade Personalâ€¦ (${done}/${assigned.length})`;
+            return { id: b.id, caption: b.caption || `GebÃ¤ude #${b.id}`, personals, stats: buildStats(personals) };
           } catch (e) {
             done++;
-            return { id: b.id, caption: b.caption || `Gebäude #${b.id}`, personals: [], stats: buildStats([]), error: true };
+            return { id: b.id, caption: b.caption || `GebÃ¤ude #${b.id}`, personals: [], stats: buildStats([]), error: true };
           }
         }));
         results.push(...batchResults);
@@ -1405,7 +1405,7 @@
     }
   }
 
-  // ─── Tabelle rendern ───────────────────────────────────────────────────────
+  // â”€â”€â”€ Tabelle rendern â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   function renderTable(panel, buildings) {
     let searchVal  = '';
@@ -1429,7 +1429,7 @@
     function statusRatio(b) {
       const total = b.stats.noEducation;
       if (total === 0) return 1;
-      const verf = b.stats.noEducationByStatus['Verfügbar'] || 0;
+      const verf = b.stats.noEducationByStatus['VerfÃ¼gbar'] || 0;
       return verf / total;
     }
 
@@ -1480,7 +1480,7 @@
       if (stats.noEducation > 0) {
         html += `<span class="grisu-badge badge-missing">Ohne Ausbildung: ${stats.noEducation}</span>`;
       }
-      return html || `<span class="grisu-badge badge-none">–</span>`;
+      return html || `<span class="grisu-badge badge-none">â€“</span>`;
     }
 
     function statusBadge(b) {
@@ -1490,13 +1490,13 @@
           ? `<span class="grisu-badge badge-none">Kein Personal</span>`
           : `<span class="grisu-badge badge-ok">Alle ausgebildet</span>`;
       }
-      const verf = b.stats.noEducationByStatus['Verfügbar'] || 0;
+      const verf = b.stats.noEducationByStatus['VerfÃ¼gbar'] || 0;
       const ratio = verf / total;
-      const otherStatuses = Object.entries(b.stats.noEducationByStatus).filter(([s]) => s !== 'Verfügbar');
+      const otherStatuses = Object.entries(b.stats.noEducationByStatus).filter(([s]) => s !== 'VerfÃ¼gbar');
       let cls = 'badge-ok';
       if (ratio < 0.75) cls = 'badge-missing';
       else if (ratio < 1) cls = 'badge-partial';
-      let html = `<span class="grisu-badge ${cls}">${verf}/${total} unausgeb. verfügbar</span>`;
+      let html = `<span class="grisu-badge ${cls}">${verf}/${total} unausgeb. verfÃ¼gbar</span>`;
       for (const [st, count] of otherStatuses) {
         html += `<span class="grisu-badge badge-partial">${escHtml(st)}: ${count}</span>`;
       }
@@ -1543,27 +1543,27 @@
       const activeEduCount = allEducations.filter(edu => eduFilters[edu].active).length;
 
       let html = `
-        <input class="grisu-search" type="text" placeholder="🔍 Wache suchen…" value="${escHtml(searchVal)}" id="${TAB_ID}-search">
+        <input class="grisu-search" type="text" placeholder="ðŸ” Wache suchenâ€¦" value="${escHtml(searchVal)}" id="${TAB_ID}-search">
         <div class="grisu-filter-row">
           <span style="font-size:12px;color:#222;font-weight:700;margin-right:4px;">Filter:</span>
           <button class="grisu-btn-filter ${filterMode==='all'?'active':''}"          data-filter="all">Alle (${buildings.length})</button>
-          <button class="grisu-btn-filter ${filterMode==='problems'?'active':''}"     data-filter="problems">⚠ Unterbesetzt/Krank (${totalProblems})</button>
+          <button class="grisu-btn-filter ${filterMode==='problems'?'active':''}"     data-filter="problems">âš  Unterbesetzt/Krank (${totalProblems})</button>
           <button class="grisu-btn-filter ${filterMode==='noeducation'?'active':''}"  data-filter="noeducation">Ohne Ausbildung vorhanden (${totalNoEducation})</button>
           <button class="grisu-btn-filter ${filterMode==='unbound'?'active':''}"      data-filter="unbound">Nicht gebundenes Personal (${totalUnbound})</button>
           <button class="grisu-btn-filter ${filterMode==='empty'?'active':''}"        data-filter="empty">Kein Personal (${totalEmpty})</button>
-          ${allEducations.length ? `<button class="grisu-edufilter-toggle ${eduFilterBoxOpen || activeEduCount ? 'active':''}" id="${TAB_ID}-edufilter-toggle">🎓 Ausbildungsfilter ${activeEduCount ? `(${activeEduCount})` : ''}</button>` : ''}
+          ${allEducations.length ? `<button class="grisu-edufilter-toggle ${eduFilterBoxOpen || activeEduCount ? 'active':''}" id="${TAB_ID}-edufilter-toggle">ðŸŽ“ Ausbildungsfilter ${activeEduCount ? `(${activeEduCount})` : ''}</button>` : ''}
         </div>
         ${eduFilterBoxOpen ? `
         <div class="grisu-edufilter-box">
           ${allEducations.map((edu, i) => `
             <div class="grisu-edufilter-row">
               <input type="checkbox" id="${TAB_ID}-edu-active-${i}" data-edu="${escHtml(edu)}" ${eduFilters[edu].active ? 'checked' : ''}>
-              <label for="${TAB_ID}-edu-active-${i}">${escHtml(edu)} — mind.</label>
+              <label for="${TAB_ID}-edu-active-${i}">${escHtml(edu)} â€” mind.</label>
               <input type="number" min="0" class="grisu-edufilter-min" id="${TAB_ID}-edu-min-${i}" data-edu-min="${escHtml(edu)}" value="${eduFilters[edu].min}">
             </div>
           `).join('')}
         </div>` : ''}
-        <div class="grisu-summary">${filtered.length} von ${buildings.length} Gebäuden — Zeile anklicken für Details</div>
+        <div class="grisu-summary">${filtered.length} von ${buildings.length} GebÃ¤uden â€” Zeile anklicken fÃ¼r Details</div>
         <div class="grisu-table-wrap">
           <table class="grisu-tbl">
             <thead><tr>
@@ -1578,7 +1578,7 @@
         const isOpen = expanded.has(b.id);
         html += `
           <tr class="grisu-main-row" data-bid="${b.id}">
-            <td class="grisu-col-name"><a class="grisu-link" href="/buildings/${b.id}" target="_blank">${escHtml(b.caption)}</a> ${b.error ? '⚠' : ''}</td>
+            <td class="grisu-col-name"><a class="grisu-link" href="/buildings/${b.id}" target="_blank">${escHtml(b.caption)}</a> ${b.error ? 'âš ' : ''}</td>
             <td>${b.stats.total}</td>
             <td>${statusBadge(b)}</td>
             <td><div class="grisu-badge-list">${educationBadges(b.stats)}</div></td>
@@ -1655,7 +1655,7 @@
     render();
   }
 
-  // ─── Start ─────────────────────────────────────────────────────────────────
+  // â”€â”€â”€ Start â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   function setup() {
     observer = new MutationObserver(() => {
@@ -1674,7 +1674,7 @@
     }
   }
 
-  // Aufräumen beim Ausschalten
+  // AufrÃ¤umen beim Ausschalten
   ctx.onCleanup(() => {
     if (observer) observer.disconnect();
     if (tabLi) tabLi.remove();
@@ -1691,43 +1691,43 @@
     register({
         id: 'missionshare',
         name: 'MissionShare',
-        description: 'Einsätze mit Credit-/Zeit-Filter und Nachricht in der Allianz teilen.',
+        description: 'EinsÃ¤tze mit Credit-/Zeit-Filter und Nachricht in der Allianz teilen.',
         where: 'Hauptseite (Einsatzliste)',
         match: loc => loc.pathname === '/' && window.top === window,
 
         init(ctx) {
     const $ = window.jQuery;
-    if (!$) { ctx.error('jQuery nicht gefunden – Modul nicht gestartet.'); return; }
+    if (!$) { ctx.error('jQuery nicht gefunden â€“ Modul nicht gestartet.'); return; }
 
     const NS = '.lsstbMissionShare';   // Namensraum, damit alle Handler beim Ausschalten sauber entfernt werden
 
-    // Einsatznamen filtern – nur Einsätze mit diesen Namen teilen
+    // Einsatznamen filtern â€“ nur EinsÃ¤tze mit diesen Namen teilen
     const filterByMission = false; //true - Filter wird benutzt -- false - Filter wird ignoriert
     const allowedMissions = [
-        "Brückeneinsturz (Groß)",
-        "Brückeneinsturz (klein)",
+        "BrÃ¼ckeneinsturz (GroÃŸ)",
+        "BrÃ¼ckeneinsturz (klein)",
         "Einsturz Terminal",
         "Damm droht zu brechen",
         "Gasexplosion",
-        "Feuer auf Bauernhof - Groß",
-        "Großbrand in Museum",
+        "Feuer auf Bauernhof - GroÃŸ",
+        "GroÃŸbrand in Museum",
         "Brand bei Holzverarbeiter",
-        "Großer Supermarkt eingestürzt",
-        "Schwimmbaddach eingestürzt",
+        "GroÃŸer Supermarkt eingestÃ¼rzt",
+        "Schwimmbaddach eingestÃ¼rzt",
         "Brand auf Kompostieranlage",
-        "Havarie in Kläranlage",
+        "Havarie in KlÃ¤ranlage",
         "Brand in Getreidesilo",
         "Havariertes Flussfahrtschiff",
-        "Zusammenstoß zweier Busse",
-        "Wassereinbruch Großbaustelle",
-        "Eingestürztes Wohnhaus",
-        "Gewässer gekippt (Groß)",
-        "Verschüttete Personen",
+        "ZusammenstoÃŸ zweier Busse",
+        "Wassereinbruch GroÃŸbaustelle",
+        "EingestÃ¼rztes Wohnhaus",
+        "GewÃ¤sser gekippt (GroÃŸ)",
+        "VerschÃ¼ttete Personen",
     ];
     const normName = s => String(s).toLowerCase().trim();
     const allowedNorm = allowedMissions.map(normName);
 
-    // Freigabezeit filtern - nur Einsätze vor/nach Uhrzeit (UI gesteuert)
+    // Freigabezeit filtern - nur EinsÃ¤tze vor/nach Uhrzeit (UI gesteuert)
     const filterByTime = false;
 
     $("body")
@@ -1777,7 +1777,7 @@
                             <h4>Einstellungen</h4>
                         </td>
                     </tr>
-                    <tr title="Einsätze bis einschließlich dieser Credit-Grenze freigeben (untere Einsätze)">
+                    <tr title="EinsÃ¤tze bis einschlieÃŸlich dieser Credit-Grenze freigeben (untere EinsÃ¤tze)">
                         <td>
                             <strong>
                                 Credits bis:
@@ -1791,7 +1791,7 @@
                         </td>
                         <td></td>
                     </tr>
-                    <tr title="Einsätze ab einschließlich dieser Credit-Grenze freigeben (obere Einsätze)">
+                    <tr title="EinsÃ¤tze ab einschlieÃŸlich dieser Credit-Grenze freigeben (obere EinsÃ¤tze)">
                         <td>
                             <strong>
                                 Credits ab:
@@ -1915,7 +1915,7 @@
         <span class="glyphicon glyphicon-forward"></span>&nbsp;
     </a>`);
 
-    // Aufräumen beim Ausschalten
+    // AufrÃ¤umen beim Ausschalten
     ctx.onCleanup(() => {
         $("body").off(NS);
         if ($('#shMiModal').is(':visible')) {
@@ -1939,7 +1939,7 @@
         if (!localStorage.shMiSettingsV2) localStorage.setItem("shMiSettingsV2", JSON.stringify({ credits: 0, messages: [{ c: true, m: '' }], time: "04:00", timeDirection: "before" }));
 
         const data = JSON.parse(localStorage.shMiSettingsV2);
-        // Migration: früher gab es nur eine Untergrenze ("credits", effektiv mind. 2500) -> wird zum Bereich "ab"
+        // Migration: frÃ¼her gab es nur eine Untergrenze ("credits", effektiv mind. 2500) -> wird zum Bereich "ab"
         if (data.high === undefined) {
             data.high = Math.max(Number(data.credits) || 0, 2500);
             data.highEnabled = true;
@@ -2108,7 +2108,7 @@
             }
 
             // Filter Credits
-            // Zwei Bereiche, beide einschließlich, einzeln aktivierbar; ein Einsatz wird geteilt,
+            // Zwei Bereiche, beide einschlieÃŸlich, einzeln aktivierbar; ein Einsatz wird geteilt,
             // wenn er in mindestens einem aktiven Bereich liegt. Ohne aktiven Bereich wird nichts geteilt.
             const credits = parsed.average_credits == null ? NaN : Number(parsed.average_credits);
             const lowOn  = $('#shMiLowEnabled').prop('checked')  && $('#shMiLow').val()  !== '';
@@ -2154,7 +2154,7 @@
     const SHARE_DELAY_MS = 150;
     const sleep = ms => new Promise(r => setTimeout(r, ms));
 
-    // Mission Share – nacheinander, mit Pause
+    // Mission Share â€“ nacheinander, mit Pause
     async function shareMissions(missions) {
        const total = missions.length;
         const msgText = $('.shMiMessageRow:has(.shMiMessageSelect:checked) .shMiMessage')[0].value;
@@ -2193,10 +2193,10 @@
                 }
                 setPrg('#shMiPrgsMessage', ++nMsg);
             } catch (e) {
-                ctx.warn('Freigabe fehlgeschlagen für', m.id, e);
+                ctx.warn('Freigabe fehlgeschlagen fÃ¼r', m.id, e);
             }
 
-            // Pause vor dem nächsten Einsatz (nach dem letzten nicht nötig)
+            // Pause vor dem nÃ¤chsten Einsatz (nach dem letzten nicht nÃ¶tig)
             if (i < total - 1) await sleep(SHARE_DELAY_MS);
             }
         } finally {
@@ -2212,8 +2212,8 @@
     register({
         id: 'massenausbau',
         name: 'Massenausbau',
-        description: 'Erweiterungen leitstellenübergreifend bauen (Credits) und einsatzbereit setzen, mit Leitstellenfilter.',
-        where: 'Spielmenü (unter „Notizen“)',
+        description: 'Erweiterungen leitstellenÃ¼bergreifend bauen (Credits) und einsatzbereit setzen, mit Leitstellenfilter.',
+        where: 'SpielmenÃ¼ (unter â€žNotizenâ€œ)',
         match: loc => window.top === window,
 
         init(ctx) {
@@ -2226,7 +2226,7 @@
     let scanning = false;
     let scanAbort = false;
 
-    // Auslöser (nur als Fallback sichtbar, wenn kein Menüeintrag gefunden wird)
+    // AuslÃ¶ser (nur als Fallback sichtbar, wenn kein MenÃ¼eintrag gefunden wird)
     const btn = document.createElement('button');
     btn.id = 'mx-open-btn';
 
@@ -2261,7 +2261,7 @@
             const li = notes.closest('li');
             const anchor = li || notes;
             const parent = anchor.parentNode;
-            // Schon ein Eintrag in diesem Menü? (der Toolbox-Eintrag kann direkt hinter "Notizen" stehen)
+            // Schon ein Eintrag in diesem MenÃ¼? (der Toolbox-Eintrag kann direkt hinter "Notizen" stehen)
             if (parent.querySelector(':scope > .mx-menu-entry')) return;
 
             let entry;
@@ -2272,14 +2272,14 @@
                 const a = document.createElement('a');
                 a.href = '#';
                 a.className = cleanClass(notes.className);
-                a.textContent = '🏗 Massenausbau';
+                a.textContent = 'ðŸ— Massenausbau';
                 a.onclick = openMx;
                 entry.appendChild(a);
             } else {
                 entry = document.createElement('a');
                 entry.href = '#';
                 entry.className = cleanClass(notes.className) + ' mx-menu-entry';
-                entry.textContent = '🏗 Massenausbau';
+                entry.textContent = 'ðŸ— Massenausbau';
                 entry.onclick = openMx;
             }
             parent.insertBefore(entry, anchor.nextSibling);
@@ -2299,12 +2299,12 @@
     });
     menuObserver.observe(document.body, { childList: true, subtree: true });
 
-    // Fallback: nur auf der Hauptseite, nur wenn kein Menüeintrag gefunden wurde
+    // Fallback: nur auf der Hauptseite, nur wenn kein MenÃ¼eintrag gefunden wurde
     fallbackTimer = setTimeout(function () {
         if (!alive) return;
         if (document.querySelector('.mx-menu-entry')) return;
         if (location.pathname !== '/') return;
-        btn.textContent = '🏗 Massenausbau';
+        btn.textContent = 'ðŸ— Massenausbau';
         btn.style.cssText = 'position:fixed;right:10px;bottom:80px;z-index:2147483647;padding:10px 14px;' +
             'background:#337ab7;color:#fff;border:0;border-radius:6px;font-size:16px;' +
             'box-shadow:0 2px 8px rgba(0,0,0,.5);';
@@ -2312,7 +2312,7 @@
         ctx.log('Notizen-Link nicht gefunden, Fallback-Button aktiv');
     }, 12000);
 
-    // Aufräumen beim Ausschalten
+    // AufrÃ¤umen beim Ausschalten
     ctx.onCleanup(() => {
         alive = false;
         scanAbort = true;
@@ -2360,7 +2360,7 @@
             return null;
         };
 
-        // ---------- Einstellungen für den Scan ----------
+        // ---------- Einstellungen fÃ¼r den Scan ----------
         const CONCURRENCY = 4;                 // gleichzeitige Requests (bei HTTP 429 im Log auf 2-3 senken)
         const CACHE_TTL = 15 * 60 * 1000;      // Scan-Ergebnisse 15 Minuten wiederverwenden
         const CACHE_KEY = 'mx-scan-cache-v2';
@@ -2384,7 +2384,7 @@
         function saveCache() {
             try { localStorage.setItem(CACHE_KEY, JSON.stringify(cache)); } catch (e) { /* voll/gesperrt: egal */ }
         }
-        // JSON macht aus NaN ein null -> wieder zu NaN, sonst würde ein unbekannter Preis als 0 gelten
+        // JSON macht aus NaN ein null -> wieder zu NaN, sonst wÃ¼rde ein unbekannter Preis als 0 gelten
         function normLink(l) {
             return {
                 extId: l.extId,
@@ -2394,7 +2394,7 @@
             };
         }
 
-        // ---------- Request mit Wiederholung bei Überlastung ----------
+        // ---------- Request mit Wiederholung bei Ãœberlastung ----------
         async function fetchRetry(url, opts, retry5xx) {
             let lastStatus = 0;
             for (let i = 0; i < 4; i++) {
@@ -2410,7 +2410,7 @@
             throw new Error('HTTP ' + lastStatus + ' (zu viele Versuche)');
         }
 
-        // ---------- Parallel-Ausführung mit Limit ----------
+        // ---------- Parallel-AusfÃ¼hrung mit Limit ----------
         async function runPool(items, limit, worker) {
             let idx = 0;
             const runners = [];
@@ -2439,12 +2439,12 @@
             'border:2px solid #444;border-radius:6px;padding:15px;z-index:2147483647;box-shadow:0 0 25px #000;';
         modal.innerHTML =
             '<div style="display:flex;justify-content:space-between;align-items:center">' +
-            '<h4 style="margin:0">Erweiterungen leitstellenübergreifend</h4>' +
-            '<button id="mx-close" class="btn btn-default btn-xs">✕</button></div><hr>' +
+            '<h4 style="margin:0">Erweiterungen leitstellenÃ¼bergreifend</h4>' +
+            '<button id="mx-close" class="btn btn-default btn-xs">âœ•</button></div><hr>' +
             '<div style="margin-bottom:8px">' +
             '<label style="font-weight:normal;margin-right:14px"><input type="radio" name="mx-mode" value="build" checked> Bauen (Credits)</label>' +
             '<label style="font-weight:normal"><input type="radio" name="mx-mode" value="activate"> Einsatzbereit setzen</label></div>' +
-            '<div id="mx-status">Lade Gebäude…</div>' +
+            '<div id="mx-status">Lade GebÃ¤udeâ€¦</div>' +
             '<div style="margin:10px 0;padding:8px;border:1px solid #ccc;border-radius:4px">' +
             '<b>Leitstellen</b> ' +
             '<button id="mx-ls-all" class="btn btn-default btn-xs">Alle</button> ' +
@@ -2459,8 +2459,8 @@
             '<div id="mx-actions" style="display:none;margin-top:10px">' +
             '<div id="mx-summary" style="padding:8px;border:1px solid #ccc;border-radius:4px;margin-bottom:8px"></div>' +
             '<button id="mx-refresh" class="btn btn-default btn-sm">Credits aktualisieren</button> ' +
-            '<button id="mx-build" class="btn btn-success" disabled>Ausgewählte bauen</button>' +
-            '<button id="mx-act" class="btn btn-success" disabled style="display:none">Ausgewählte einsatzbereit setzen</button></div>' +
+            '<button id="mx-build" class="btn btn-success" disabled>AusgewÃ¤hlte bauen</button>' +
+            '<button id="mx-act" class="btn btn-success" disabled style="display:none">AusgewÃ¤hlte einsatzbereit setzen</button></div>' +
             '<pre id="mx-log" style="max-height:200px;overflow:auto;margin-top:10px;display:none"></pre>';
         document.body.appendChild(modal);
 
@@ -2498,7 +2498,7 @@
         function renderLs() {
             $('mx-ls').innerHTML = lsList.map(ls =>
                 '<div><label style="font-weight:normal"><input type="checkbox" class="mx-ls" value="' + ls.key + '" checked> ' +
-                esc(ls.name) + ' <small>(' + ls.count + ' Gebäude)</small></label></div>'
+                esc(ls.name) + ' <small>(' + ls.count + ' GebÃ¤ude)</small></label></div>'
             ).join('');
             modal.querySelectorAll('.mx-ls').forEach(c => { c.onchange = onLsChange; });
         }
@@ -2513,7 +2513,7 @@
             if (!scanned.length) { $('mx-hint').textContent = ''; return; }
             const missing = selectedLsKeys().filter(k => !scannedLs[k]);
             $('mx-hint').textContent = missing.length
-                ? '⚠ ' + missing.length + ' gewählte Leitstelle(n) wurden noch nicht gescannt – bitte „Erweiterungen suchen“ erneut klicken.'
+                ? 'âš  ' + missing.length + ' gewÃ¤hlte Leitstelle(n) wurden noch nicht gescannt â€“ bitte â€žErweiterungen suchenâ€œ erneut klicken.'
                 : '';
         }
 
@@ -2550,7 +2550,7 @@
                     const j = await (await fetch(url, { credentials: 'same-origin' })).json();
                     const v = firstNum(j.credits_user_current, j.user_credits, j.credits_user, j.credits);
                     if (v !== null) return v;
-                } catch (e) { /* nächste Quelle */ }
+                } catch (e) { /* nÃ¤chste Quelle */ }
             }
             return null;
         }
@@ -2572,9 +2572,9 @@
             return isNaN(n) ? NaN : n;
         }
 
-        // ---------- Gebäude laden ----------
+        // ---------- GebÃ¤ude laden ----------
         async function loadBuildings() {
-            $('mx-status').textContent = 'Lade alle Gebäude…';
+            $('mx-status').textContent = 'Lade alle GebÃ¤udeâ€¦';
             buildings = await (await fetch('/api/buildings', { credentials: 'same-origin' })).json();
 
             const names = {};
@@ -2589,10 +2589,10 @@
 
             renderLs();
             rebuildTypeOptions();
-            $('mx-status').textContent = buildings.length + ' Gebäude aus ' + lsList.length + ' Leitstellen-Gruppen geladen.';
+            $('mx-status').textContent = buildings.length + ' GebÃ¤ude aus ' + lsList.length + ' Leitstellen-Gruppen geladen.';
         }
 
-        // ---------- Gebäudeseite auswerten ----------
+        // ---------- GebÃ¤udeseite auswerten ----------
         function rowOf(a) {
             return a.closest('tr') || a.closest('.row') || (a.parentNode ? a.parentNode.parentNode : null);
         }
@@ -2646,7 +2646,7 @@
                 });
             });
             if (!acts.length && /nicht einsatzbereit/i.test(doc.body ? doc.body.textContent : '')) {
-                log('Hinweis ' + b.caption + ': „Nicht einsatzbereit“ gefunden, aber kein Einsatzbereit-Link (evtl. ein Formular-Knopf).');
+                log('Hinweis ' + b.caption + ': â€žNicht einsatzbereitâ€œ gefunden, aber kein Einsatzbereit-Link (evtl. ein Formular-Knopf).');
             }
             return { links: links, acts: acts };
         }
@@ -2655,13 +2655,13 @@
         $('mx-scan').onclick = async function () {
             if (scanning) {
                 scanAbort = true;
-                $('mx-scan').textContent = 'Breche ab…';
+                $('mx-scan').textContent = 'Breche abâ€¦';
                 return;
             }
             const type = Number($('mx-type').value);
             const keys = selectedLsKeys();
             const targets = buildings.filter(b => b.building_type === type && keys.indexOf(lsKey(b)) !== -1);
-            if (!targets.length) { alert('Keine Gebäude für diese Auswahl.'); return; }
+            if (!targets.length) { alert('Keine GebÃ¤ude fÃ¼r diese Auswahl.'); return; }
             const fresh = $('mx-fresh').checked;
 
             scanning = true;
@@ -2698,7 +2698,7 @@
                 }
                 done++;
                 $('mx-status').textContent = 'Scanne ' + done + '/' + targets.length +
-                    (cached ? ' (' + cached + ' aus Cache)' : '') + '…';
+                    (cached ? ' (' + cached + ' aus Cache)' : '') + 'â€¦';
             });
 
             saveCache();
@@ -2719,7 +2719,7 @@
                 return;
             }
             $('mx-status').textContent = (aborted ? 'Scan abgebrochen: ' : 'Scan fertig: ') + scanned.length +
-                ' Gebäude in ' + secs + ' s (' + cached + ' aus Cache' + (errors ? ', ' + errors + ' Fehler' : '') + ').';
+                ' GebÃ¤ude in ' + secs + ' s (' + cached + ' aus Cache' + (errors ? ', ' + errors + ' Fehler' : '') + ').';
             renderList();
             updateHint();
             if (mode === 'build') await refreshCredits();
@@ -2739,7 +2739,7 @@
             return map;
         }
 
-        // Inaktive Erweiterungen werden über den Namen gruppiert (die IDs sind pro Gebäude verschieden)
+        // Inaktive Erweiterungen werden Ã¼ber den Namen gruppiert (die IDs sind pro GebÃ¤ude verschieden)
         function computeActMap() {
             const map = {};
             activeScanned().forEach(s => s.acts.forEach(a => {
@@ -2756,7 +2756,7 @@
             if (mode === 'build') {
                 const items = Object.entries(computeExtMap()).sort((a, b) => a[1].name.localeCompare(b[1].name));
                 if (!items.length) {
-                    $('mx-list').innerHTML = '<i>Keine mit Credits baubaren Erweiterungen für diese Auswahl gefunden (evtl. alles gebaut).</i>';
+                    $('mx-list').innerHTML = '<i>Keine mit Credits baubaren Erweiterungen fÃ¼r diese Auswahl gefunden (evtl. alles gebaut).</i>';
                     $('mx-actions').style.display = 'none';
                     return;
                 }
@@ -2765,13 +2765,13 @@
                     const extra = isNaN(v.cost) ? '' : ', gesamt ' + fmt(v.cost * v.count) + ' Credits';
                     const chk = checkedBefore.indexOf(k) !== -1 ? ' checked' : '';
                     return '<div><label><input type="checkbox" class="mx-ext" value="' + esc(k) + '"' + chk + '> ' +
-                        '<b>' + esc(v.name) + '</b> – ' + price +
-                        ' <small>(fehlt in ' + v.count + ' Gebäuden' + extra + ')</small></label></div>';
+                        '<b>' + esc(v.name) + '</b> â€“ ' + price +
+                        ' <small>(fehlt in ' + v.count + ' GebÃ¤uden' + extra + ')</small></label></div>';
                 }).join('');
             } else {
                 const items = Object.values(computeActMap()).sort((a, b) => a.name.localeCompare(b.name));
                 if (!items.length) {
-                    $('mx-list').innerHTML = '<i>Keine Erweiterungen mit „Nicht einsatzbereit“ für diese Auswahl gefunden.</i>';
+                    $('mx-list').innerHTML = '<i>Keine Erweiterungen mit â€žNicht einsatzbereitâ€œ fÃ¼r diese Auswahl gefunden.</i>';
                     $('mx-actions').style.display = 'none';
                     return;
                 }
@@ -2779,7 +2779,7 @@
                     const key = encodeURIComponent(v.name);
                     const chk = checkedBefore.indexOf(key) !== -1 ? ' checked' : '';
                     return '<div><label><input type="checkbox" class="mx-ext" value="' + key + '"' + chk + '> ' +
-                        '<b>' + esc(v.name) + '</b> <small>(nicht einsatzbereit in ' + v.count + ' Gebäuden)</small></label></div>';
+                        '<b>' + esc(v.name) + '</b> <small>(nicht einsatzbereit in ' + v.count + ' GebÃ¤uden)</small></label></div>';
                 }).join('');
             }
 
@@ -2822,8 +2822,8 @@
                 const jobs = selectedActJobs();
                 $('mx-summary').innerHTML = jobs.length
                     ? 'Einsatzbereit setzen: <b>' + jobs.length + '</b> Erweiterungen in <b>' + new Set(jobs.map(j => j.b.id)).size +
-                      '</b> Gebäuden (<b>' + new Set(jobs.map(j => lsKey(j.b))).size + '</b> Leitstellen)'
-                    : 'Nichts ausgewählt.';
+                      '</b> GebÃ¤uden (<b>' + new Set(jobs.map(j => lsKey(j.b))).size + '</b> Leitstellen)'
+                    : 'Nichts ausgewÃ¤hlt.';
                 $('mx-act').disabled = !jobs.length;
                 return;
             }
@@ -2838,20 +2838,20 @@
             let state = '';
             let canBuild = false;
             if (!jobs.length) {
-                state = 'Nichts ausgewählt.';
+                state = 'Nichts ausgewÃ¤hlt.';
             } else if (unknown) {
-                state = '<b style="color:red">⚠ Für mindestens eine Erweiterung ist der Preis unbekannt – Bauen gesperrt.</b>';
+                state = '<b style="color:red">âš  FÃ¼r mindestens eine Erweiterung ist der Preis unbekannt â€“ Bauen gesperrt.</b>';
             } else if (credits === null) {
-                state = '<b style="color:red">⚠ Credit-Stand unbekannt – Bauen gesperrt. „Credits aktualisieren“ klicken.</b>';
+                state = '<b style="color:red">âš  Credit-Stand unbekannt â€“ Bauen gesperrt. â€žCredits aktualisierenâ€œ klicken.</b>';
             } else if (total > credits) {
-                state = '<b style="color:red">✖ Zu wenig Credits – es fehlen ' + fmt(total - credits) + ' Credits.</b>';
+                state = '<b style="color:red">âœ– Zu wenig Credits â€“ es fehlen ' + fmt(total - credits) + ' Credits.</b>';
             } else {
-                state = '<b style="color:green">✔ Ausreichend Credits – danach bleiben ' + fmt(credits - total) + ' übrig.</b>';
+                state = '<b style="color:green">âœ” Ausreichend Credits â€“ danach bleiben ' + fmt(credits - total) + ' Ã¼brig.</b>';
                 canBuild = true;
             }
 
             $('mx-summary').innerHTML =
-                'Ausbauten: <b>' + jobs.length + '</b> in <b>' + buildingsCount + '</b> Gebäuden (<b>' + lsCount + '</b> Leitstellen)<br>' +
+                'Ausbauten: <b>' + jobs.length + '</b> in <b>' + buildingsCount + '</b> GebÃ¤uden (<b>' + lsCount + '</b> Leitstellen)<br>' +
                 'Gesamtkosten: <b>' + fmt(total) + ' Credits</b><br>' +
                 'Dein Guthaben: <b>' + creditsTxt + '</b><br>' + state;
             $('mx-build').disabled = !canBuild;
@@ -2863,13 +2863,13 @@
         $('mx-build').onclick = async () => {
             await refreshCredits();
             const jobs = selectedJobs();
-            if (!jobs.length) { alert('Nichts ausgewählt.'); return; }
+            if (!jobs.length) { alert('Nichts ausgewÃ¤hlt.'); return; }
             if (jobs.some(j => isNaN(j.l.cost)) || credits === null) { alert('Preis oder Credit-Stand unbekannt.'); return; }
 
             const total = jobs.reduce((s, j) => s + j.l.cost, 0);
-            if (total > credits) { alert('Zu wenig Credits! Benötigt: ' + fmt(total) + ', vorhanden: ' + fmt(credits) + '.'); return; }
+            if (total > credits) { alert('Zu wenig Credits! BenÃ¶tigt: ' + fmt(total) + ', vorhanden: ' + fmt(credits) + '.'); return; }
             if (!confirm(jobs.length + ' Ausbauten in ' + new Set(jobs.map(j => j.b.id)).size +
-                ' Gebäuden (' + new Set(jobs.map(j => lsKey(j.b))).size + ' Leitstellen) für ' + fmt(total) + ' Credits starten?')) return;
+                ' GebÃ¤uden (' + new Set(jobs.map(j => lsKey(j.b))).size + ' Leitstellen) fÃ¼r ' + fmt(total) + ' Credits starten?')) return;
 
             $('mx-build').disabled = true;
             let ok = 0, fail = 0, remaining = credits;
@@ -2879,11 +2879,11 @@
                 const b = jobs[i].b;
                 const l = jobs[i].l;
                 if (l.cost > remaining) {
-                    log('⏹ Abbruch: nicht genug Credits für ' + b.caption + ': ' + l.name);
+                    log('â¹ Abbruch: nicht genug Credits fÃ¼r ' + b.caption + ': ' + l.name);
                     fail += jobs.length - i;
                     break;
                 }
-                $('mx-status').textContent = 'Baue ' + (i + 1) + '/' + jobs.length + '…';
+                $('mx-status').textContent = 'Baue ' + (i + 1) + '/' + jobs.length + 'â€¦';
                 try {
                     // POST wird nur bei HTTP 429 wiederholt (nicht bei 5xx), damit nichts doppelt gebaut wird
                     const res = await fetchRetry(l.href, {
@@ -2895,14 +2895,14 @@
                         ok++;
                         remaining -= l.cost;
                         okJobs.push(jobs[i]);
-                        log('✔ ' + b.caption + ': ' + l.name + ' (' + fmt(l.cost) + ' Credits)');
+                        log('âœ” ' + b.caption + ': ' + l.name + ' (' + fmt(l.cost) + ' Credits)');
                     } else {
                         fail++;
-                        log('✖ ' + b.caption + ': ' + l.name + ' (HTTP ' + res.status + ')');
+                        log('âœ– ' + b.caption + ': ' + l.name + ' (HTTP ' + res.status + ')');
                     }
                 } catch (e) {
                     fail++;
-                    log('✖ ' + b.caption + ': ' + l.name + ' (' + e + ')');
+                    log('âœ– ' + b.caption + ': ' + l.name + ' (' + e + ')');
                 }
                 await sleep(400);
             }
@@ -2916,7 +2916,7 @@
             });
             saveCache();
 
-            $('mx-status').textContent = 'Fertig: ' + ok + ' gestartet, ' + fail + ' fehlgeschlagen/übersprungen.';
+            $('mx-status').textContent = 'Fertig: ' + ok + ' gestartet, ' + fail + ' fehlgeschlagen/Ã¼bersprungen.';
             renderList();
             await refreshCredits();
         };
@@ -2924,9 +2924,9 @@
         // ---------- Einsatzbereit setzen ----------
         $('mx-act').onclick = async () => {
             const jobs = selectedActJobs();
-            if (!jobs.length) { alert('Nichts ausgewählt.'); return; }
+            if (!jobs.length) { alert('Nichts ausgewÃ¤hlt.'); return; }
             if (!confirm(jobs.length + ' Erweiterungen in ' + new Set(jobs.map(j => j.b.id)).size +
-                ' Gebäuden (' + new Set(jobs.map(j => lsKey(j.b))).size + ' Leitstellen) auf „Einsatzbereit“ setzen?')) return;
+                ' GebÃ¤uden (' + new Set(jobs.map(j => lsKey(j.b))).size + ' Leitstellen) auf â€žEinsatzbereitâ€œ setzen?')) return;
 
             $('mx-act').disabled = true;
             let ok = 0, fail = 0;
@@ -2937,7 +2937,7 @@
                 if (!alive) break;   // Modul wurde ausgeschaltet
                 const b = jobs[i].b;
                 const a = jobs[i].a;
-                $('mx-status').textContent = 'Setze einsatzbereit ' + (i + 1) + '/' + jobs.length + '…';
+                $('mx-status').textContent = 'Setze einsatzbereit ' + (i + 1) + '/' + jobs.length + 'â€¦';
                 try {
                     const opts = {
                         credentials: 'same-origin',
@@ -2948,14 +2948,14 @@
                     if (res.ok) {
                         ok++;
                         okJobs.push(jobs[i]);
-                        log('✔ ' + b.caption + ': ' + a.name);
+                        log('âœ” ' + b.caption + ': ' + a.name);
                     } else {
                         fail++;
-                        log('✖ ' + b.caption + ': ' + a.name + ' (HTTP ' + res.status + ')');
+                        log('âœ– ' + b.caption + ': ' + a.name + ' (HTTP ' + res.status + ')');
                     }
                 } catch (e) {
                     fail++;
-                    log('✖ ' + b.caption + ': ' + a.name + ' (' + e + ')');
+                    log('âœ– ' + b.caption + ': ' + a.name + ' (' + e + ')');
                 }
                 await sleep(300);
             }
@@ -2974,458 +2974,420 @@
     }
         },
     });
-  /*
- * LSS-Toolbox-Modul: Lehrgangszuweiser (Zusatzausbildung)
- * Basis: "Lehrgangszuweiser" von BOS-Ernie, angepasst (v0.6.0)
- *
- * Funktionen:
- *  - Zahlenfeld + Button "Auswählen" pro Wache (beliebig viele Personen, höchstens so viele wie verfügbar)
- *  - Abfrage "Zusatzausbildung": nein = nur Personal ohne Ausbildung, ja = nur Personal mit gewähltem Basislehrgang
- *  - setzt nur Häkchen in der Lehrgangs-Auswahl; der Lehrgang wird weiterhin von dir mit dem normalen Button gestartet
- *
- * Läuft nur auf /buildings/* und /schoolings/* (Schulungsseiten). Seiten-Funktionen (jQuery, update_costs, ...)
- * werden über unsafeWindow angesprochen, falls die Toolbox eine Sandbox (@grant) nutzt.
- *
- * Aufruf aus der Toolbox:  LehrgangszuweiserModule.init();
- */
-const LehrgangszuweiserModule = (function () {
-  "use strict";
+    // ======================================================================
+    // MODUL 6: Lehrgangszuweiser (Zusatzausbildung)
+    // In die Toolbox-Registry integriert; eigener Cleanup, keine fremden
+    // Spiel-Handler werden entfernt.
+    // ======================================================================
+    register({
+        id: 'lehrgangszuweiser',
+        name: 'Lehrgangszuweiser',
+        description: 'Personal je Wache per Anzahl auswÃ¤hlen; Zusatzausbildung mit Basislehrgang.',
+        where: 'Schulungsseiten (/buildings/â€¦ und /schoolings/â€¦)',
+        match: loc => /^\/(buildings|schoolings)\//.test(loc.pathname),
 
-  const W = typeof unsafeWindow !== "undefined" ? unsafeWindow : window;
+        init(ctx) {
+            const $ = window.jQuery || window.$;
+            const W = window;
 
-  function matches() {
-    return /^\/(buildings|schoolings)\//.test(location.pathname);
-  }
-
-  function run() {
-    const $ = W.$;
-
-    // ---------------------------------------------------------------------
-    // Hilfsfunktionen für die Ausbildungs-Prüfung
-    // ---------------------------------------------------------------------
-    const norm = (s) => String(s || "").replace(/\s+/g, " ").trim().toLowerCase();
-
-    // Name aus dem Label eines Lehrgangs-Radiobuttons (Dauer/Kosten abschneiden)
-    const cleanName = (s) =>
-      String(s || "")
-        .replace(/\s+/g, " ")
-        .trim()
-        .split(/\s*[\(\[]|\s+\d/)[0]
-        .trim();
-
-    // Passt ein Eintrag der Ausbildungs-Spalte zu einem Lehrgangsnamen?
-    function matches(part, name) {
-      const p = norm(part);
-      const n = norm(name);
-      if (!p || !n) return false;
-      if (p === n) return true;
-      if (n.length >= 4 && p.includes(n)) return true;
-      if (p.length >= 4 && n.includes(p)) return true;
-      return false;
-    }
-
-    // Ausbildungen einer Person (aus der Spalte "Ausbildung"), null = Zelle nicht gefunden
-    function educationsOf(checkbox) {
-      const cell = document.getElementById(
-        "school_personal_education_" + $(checkbox).val()
-      );
-      if (!cell) return null;
-      return cell.textContent
-        .split(/[,;\n]+/)
-        .map((x) => x.replace(/\s+/g, " ").trim())
-        .filter(Boolean);
-    }
-
-    // Lehrgänge der aktuellen Schule (Radiobuttons der Lehrgangsauswahl)
-    function schoolEducations() {
-      const seen = new Set();
-      const out = [];
-      document.querySelectorAll("input[name=education]").forEach((r) => {
-        const el = r.closest("label") || r.parentElement;
-        const t = cleanName(el ? el.textContent : "");
-        if (t && !seen.has(t)) {
-          seen.add(t);
-          out.push(t);
-        }
-      });
-      return out;
-    }
-
-    // Der aktuell gewählte (Ziel-)Lehrgang
-    function selectedTarget() {
-      const r = document.querySelector("input[name=education]:checked");
-      if (!r) return "";
-      const el = r.closest("label") || r.parentElement;
-      return cleanName(el ? el.textContent : "");
-    }
-
-    // ---------------------------------------------------------------------
-    // Einstellungsbox: Zusatzausbildung ja/nein + Basislehrgang
-    // ---------------------------------------------------------------------
-    function createOptionsBox() {
-      const box = document.createElement("div");
-      box.id = "schooling-assigner-options";
-      box.className = "well well-sm";
-      box.innerHTML =
-        '<label style="font-weight:bold;margin:0">' +
-        '<input type="checkbox" id="sa-extra"> Zusatzausbildung ' +
-        "(nur Personal mit Basislehrgang auswählen)</label>" +
-        '<div id="sa-basis-wrap" style="display:none;margin-top:6px">' +
-        'Basislehrgang: <input type="text" id="sa-basis" list="sa-basis-list" ' +
-        'class="form-control input-sm" style="display:inline-block;width:320px" ' +
-        'placeholder="aus der Schule wählen oder eintippen">' +
-        '<datalist id="sa-basis-list"></datalist></div>' +
-        '<div class="text-muted" id="sa-hint" style="margin-top:4px"></div>';
-
-      const extra = box.querySelector("#sa-extra");
-      const wrap = box.querySelector("#sa-basis-wrap");
-      const basis = box.querySelector("#sa-basis");
-
-      const refresh = () => {
-        wrap.style.display = extra.checked ? "" : "none";
-        box.querySelector("#sa-hint").textContent = extra.checked
-          ? "Es wird nur Personal ausgewählt, das den Basislehrgang hat und den gewählten Lehrgang noch nicht besitzt."
-          : "Es wird nur Personal ohne jede Ausbildung ausgewählt.";
-        fillList();
-      };
-      const fillList = () => {
-        const dl = box.querySelector("#sa-basis-list");
-        dl.innerHTML = "";
-        schoolEducations().forEach((name) => {
-          const o = document.createElement("option");
-          o.value = name;
-          dl.appendChild(o);
-        });
-      };
-
-      extra.addEventListener("change", refresh);
-      basis.addEventListener("focus", fillList);
-      refresh();
-      return box;
-    }
-
-    function getMode() {
-      const extra = document.getElementById("sa-extra");
-      const basis = document.getElementById("sa-basis");
-      return {
-        extra: !!(extra && extra.checked),
-        basis: basis ? basis.value.trim() : "",
-      };
-    }
-
-    // ---------------------------------------------------------------------
-    // Aufbau der Oberfläche
-    // ---------------------------------------------------------------------
-    let elements = document.getElementsByClassName(
-      "panel-heading personal-select-heading"
-    );
-    for (let i = 0; i < elements.length; i++) {
-      let buildingId = elements[i].getAttribute("building_id");
-      elements[i].children[0].appendChild(createPersonnelSelector(buildingId));
-    }
-
-    if (elements.length) {
-      const panel = elements[0].closest(".panel");
-      if (panel && panel.parentNode) {
-        panel.parentNode.insertBefore(createOptionsBox(), panel);
-      }
-    }
-
-    $(".personal-select-heading")
-      .unbind("click")
-      .bind("click", panelHeadingClickEvent);
-
-    async function selectPersonnelClick(event) {
-      const buildingId = event.currentTarget.dataset.buildingId;
-      const input = document.getElementById(
-        "schooling-assigner-count-" + buildingId
-      );
-      await selectPersonnel(buildingId, input ? input.value : "");
-      event.preventDefault();
-    }
-
-    async function resetPersonnelClick(event) {
-      await resetPersonnel(event.target.dataset.buildingId);
-      event.preventDefault();
-    }
-
-    async function panelHeadingClickEvent(event) {
-      // Skip redundant panelHeadingClick call which is handled by button click event
-      if (
-        event.target.classList.contains("schooling-personnel-select-button") ||
-        event.target.parentNode.classList.contains(
-          "schooling-personnel-reset-button"
-        )
-      ) {
-        return;
-      }
-
-      let buildingIdElement = event.target.outerHTML.match(/building_id="(\d+)"/);
-      if (buildingIdElement === null) {
-        buildingIdElement =
-          event.target.parentElement.parentElement.parentElement.parentElement.outerHTML.match(
-            /building_id="(\d+)"/
-          );
-      }
-
-      await panelHeadingClick(buildingIdElement[1], true);
-    }
-
-    async function panelHeadingClick(buildingId, toggle = false) {
-      const panelHeading = getPanelHeading(buildingId);
-      const panelBody = getPanelBody(buildingId);
-
-      const href = panelHeading.outerHTML.match(/href="([^"]+)"/)[1];
-
-      if (panelBody.classList.contains("hidden")) {
-        if (toggle) {
-          panelBody.classList.remove("hidden");
-        }
-
-        if (W.loadedBuildings.indexOf(href) === -1) {
-          W.loadedBuildings.push(href);
-          await $.get(href, function (data) {
-            panelBody.innerHTML = data;
-
-            const education_key = $("input[name=education]:checked").attr(
-              "education_key"
-            );
-
-            if (
-              typeof education_key == "undefined" &&
-              typeof W.globalEducationKey != "undefined"
-            ) {
-              W.schooling_disable(W.globalEducationKey);
-            } else if (typeof education_key != "undefined") {
-              W.schooling_disable(education_key);
-              W.update_schooling_free();
+            if (!$ || !Array.isArray(W.loadedBuildings)) {
+                ctx.log('Schulungsfunktionen nicht verfÃ¼gbar (jQuery/loadedBuildings fehlen).');
+                return;
             }
-          });
+
+            const OPTIONS_ID = 'schooling-assigner-options';
+            const PREFIX_ID = 'schooling-assigner-';
+            let built = false;
+
+            const norm = value => String(value || '')
+                .replace(/\s+/g, ' ')
+                .trim()
+                .toLocaleLowerCase('de');
+
+            // Dauer/Kosten aus dem Label entfernen, KlammerzusÃ¤tze bleiben bewusst weg.
+            const cleanName = value => String(value || '')
+                .replace(/\s+/g, ' ')
+                .trim()
+                .split(/\s*[\(\[]|\s+\d/)[0]
+                .trim();
+
+            function matchesEducation(part, name) {
+                const p = norm(part);
+                const n = norm(name);
+                if (!p || !n) return false;
+                return p === n || (n.length >= 4 && p.includes(n)) ||
+                    (p.length >= 4 && n.includes(p));
+            }
+
+            function educationsOf(checkbox) {
+                const cell = document.getElementById(
+                    'school_personal_education_' + checkbox.value
+                );
+                if (!cell) return null;
+                return cell.textContent
+                    .split(/[,;\n]+/)
+                    .map(x => x.replace(/\s+/g, ' ').trim())
+                    .filter(Boolean);
+            }
+
+            function schoolEducations() {
+                const seen = new Set();
+                const result = [];
+                document.querySelectorAll('input[name="education"]').forEach(radio => {
+                    const label = radio.closest('label') || radio.parentElement;
+                    const name = cleanName(label ? label.textContent : '');
+                    if (name && !seen.has(name)) {
+                        seen.add(name);
+                        result.push(name);
+                    }
+                });
+                return result;
+            }
+
+            function selectedTarget() {
+                const radio = document.querySelector('input[name="education"]:checked');
+                if (!radio) return '';
+                const label = radio.closest('label') || radio.parentElement;
+                return cleanName(label ? label.textContent : '');
+            }
+
+            function createOptionsBox() {
+                const box = document.createElement('div');
+                box.id = OPTIONS_ID;
+                box.className = 'well well-sm';
+                box.style.marginBottom = '10px';
+                box.innerHTML = `
+                    <label style="font-weight:bold;margin:0">
+                        <input type="checkbox" id="sa-extra">
+                        Zusatzausbildung (nur Personal mit Basislehrgang auswÃ¤hlen)
+                    </label>
+                    <div id="sa-basis-wrap" style="display:none;margin-top:6px">
+                        Basislehrgang:
+                        <input type="text" id="sa-basis" list="sa-basis-list"
+                            class="form-control input-sm"
+                            style="display:inline-block;width:320px;max-width:100%"
+                            placeholder="Aus der Schule wÃ¤hlen oder eintippen">
+                        <datalist id="sa-basis-list"></datalist>
+                    </div>
+                    <div class="text-muted" id="sa-hint" style="margin-top:4px"></div>`;
+
+                const extra = box.querySelector('#sa-extra');
+                const wrap = box.querySelector('#sa-basis-wrap');
+                const basis = box.querySelector('#sa-basis');
+                const hint = box.querySelector('#sa-hint');
+
+                function fillList() {
+                    const list = box.querySelector('#sa-basis-list');
+                    list.replaceChildren();
+                    schoolEducations().forEach(name => {
+                        const option = document.createElement('option');
+                        option.value = name;
+                        list.appendChild(option);
+                    });
+                }
+
+                function refresh() {
+                    wrap.style.display = extra.checked ? '' : 'none';
+                    hint.textContent = extra.checked
+                        ? 'Es wird Personal ausgewÃ¤hlt, das den Basislehrgang besitzt, den Ziel-Lehrgang aber noch nicht.'
+                        : 'Es wird ausschlieÃŸlich Personal ohne eingetragene Ausbildung ausgewÃ¤hlt.';
+                    fillList();
+                }
+
+                extra.addEventListener('change', refresh);
+                basis.addEventListener('focus', fillList);
+                refresh();
+                return box;
+            }
+
+            function getMode() {
+                const extra = document.getElementById('sa-extra');
+                const basis = document.getElementById('sa-basis');
+                return {
+                    extra: !!(extra && extra.checked),
+                    basis: basis ? basis.value.trim() : ''
+                };
+            }
+
+            function getPanelHeading(buildingId) {
+                return document.querySelector(
+                    `.personal-select-heading[building_id="${buildingId}"]`
+                );
+            }
+
+            function getPanelBody(buildingId) {
+                return document.querySelector(
+                    `.panel-body[building_id="${buildingId}"]`
+                );
+            }
+
+            function applySchoolingRules() {
+                const selected = $('input[name="education"]:checked').attr('education_key');
+                if (typeof selected === 'undefined' && typeof W.globalEducationKey !== 'undefined') {
+                    if (typeof W.schooling_disable === 'function') W.schooling_disable(W.globalEducationKey);
+                } else if (typeof selected !== 'undefined') {
+                    if (typeof W.schooling_disable === 'function') W.schooling_disable(selected);
+                    if (typeof W.update_schooling_free === 'function') W.update_schooling_free();
+                }
+            }
+
+            // LÃ¤dt den Personalbereich bei Bedarf, ohne die Click-Handler des Spiels zu entfernen.
+            async function ensurePanelLoaded(buildingId) {
+                const heading = getPanelHeading(buildingId);
+                const body = getPanelBody(buildingId);
+                if (!heading || !body) throw new Error('Wachenbereich ' + buildingId + ' nicht gefunden.');
+
+                const link = heading.querySelector('a[href]') || heading;
+                const href = link.getAttribute('href');
+                if (!href) throw new Error('Ladeadresse der Wache ' + buildingId + ' fehlt.');
+
+                if (!W.loadedBuildings.includes(href) || !body.querySelector('.schooling_checkbox')) {
+                    const html = await new Promise((resolve, reject) => {
+                        $.get(href).done(resolve).fail((xhr, status, error) =>
+                            reject(new Error(error || status || 'Laden fehlgeschlagen'))
+                        );
+                    });
+                    body.innerHTML = html;
+                    if (!W.loadedBuildings.includes(href)) W.loadedBuildings.push(href);
+                    applySchoolingRules();
+                }
+                return body;
+            }
+
+            function countSelectedPersonnel(buildingId) {
+                return document.querySelectorAll(
+                    `.schooling_checkbox[building_id="${buildingId}"]:checked`
+                ).length;
+            }
+
+            function updateSelectionCounter(buildingId, note = '') {
+                const selector = PREFIX_ID + buildingId;
+                const controls = document.getElementById(selector);
+                if (!controls) return;
+
+                let counter = document.getElementById('personnel-selection-counter-' + buildingId);
+                if (!counter) {
+                    counter = document.createElement('span');
+                    counter.id = 'personnel-selection-counter-' + buildingId;
+                    controls.parentNode.insertBefore(counter, controls);
+                }
+                counter.className = note ? 'label label-warning' : 'label label-primary';
+                counter.style.marginRight = '6px';
+                counter.textContent = countSelectedPersonnel(buildingId) + ' ausgewÃ¤hlt' +
+                    (note ? ' â€“ ' + note : '');
+            }
+
+            function updateFreeCount(value) {
+                const free = document.getElementById('schooling_free');
+                if (free) free.textContent = String(Math.max(0, value));
+                if (typeof W.update_costs === 'function') W.update_costs();
+            }
+
+            async function selectPersonnel(buildingId, rawWanted) {
+                const mode = getMode();
+                if (mode.extra && !mode.basis) {
+                    alert('Bitte zuerst den Basislehrgang wÃ¤hlen (oder Zusatzausbildung abwÃ¤hlen).');
+                    return;
+                }
+
+                const wanted = Number.parseInt(rawWanted, 10);
+                if (!Number.isInteger(wanted) || wanted < 1) {
+                    alert('Bitte eine Anzahl grÃ¶ÃŸer 0 eintragen.');
+                    return;
+                }
+
+                const target = selectedTarget();
+                if (!target) {
+                    alert('Bitte zuerst oben den Ziel-Lehrgang auswÃ¤hlen.');
+                    return;
+                }
+
+                await ensurePanelLoaded(buildingId);
+
+                const freeElement = document.getElementById('schooling_free');
+                let free = freeElement ? Number.parseInt(freeElement.textContent, 10) || 0 : 0;
+                const already = countSelectedPersonnel(buildingId);
+                let remaining = Math.max(0, wanted - already);
+                let eligible = 0;
+                let added = 0;
+
+                document.querySelectorAll(
+                    `.schooling_checkbox[building_id="${buildingId}"]`
+                ).forEach(checkbox => {
+                    if (checkbox.checked || checkbox.disabled) return;
+
+                    // Personen, die bereits einem Fahrzeug zugewiesen sind, Ã¼berspringen.
+                    const row = checkbox.closest('tr') || checkbox.parentElement?.parentElement;
+                    if (row && row.querySelector('a')) return;
+
+                    const parts = educationsOf(checkbox);
+                    if (parts === null) return; // unbekannter Ausbildungsstand: niemals blind auswÃ¤hlen
+
+                    let eligiblePerson;
+                    if (mode.extra) {
+                        const hasBasis = parts.some(part => matchesEducation(part, mode.basis));
+                        const hasTarget = parts.some(part => matchesEducation(part, target));
+                        eligiblePerson = hasBasis && !hasTarget;
+                    } else {
+                        eligiblePerson = parts.length === 0;
+                    }
+                    if (!eligiblePerson) return;
+
+                    eligible++;
+                    if (remaining > 0 && free > 0) {
+                        checkbox.checked = true;
+                        remaining--;
+                        free--;
+                        added++;
+                    }
+                });
+
+                updateFreeCount(free);
+                const total = already + added;
+                let note = '';
+                if (total < wanted) {
+                    note = free <= 0 && eligible > added
+                        ? 'Lehrgang voll'
+                        : 'nur ' + total + ' geeignet/verfÃ¼gbar';
+                }
+                updateSelectionCounter(buildingId, note);
+            }
+
+            async function resetPersonnel(buildingId) {
+                await ensurePanelLoaded(buildingId);
+                const freeElement = document.getElementById('schooling_free');
+                let free = freeElement ? Number.parseInt(freeElement.textContent, 10) || 0 : 0;
+
+                document.querySelectorAll(
+                    `.schooling_checkbox[building_id="${buildingId}"]:checked`
+                ).forEach(checkbox => {
+                    checkbox.checked = false;
+                    free++;
+                });
+
+                updateFreeCount(free);
+                updateSelectionCounter(buildingId);
+            }
+
+            function createPersonnelSelector(buildingId) {
+                const group = document.createElement('div');
+                group.id = PREFIX_ID + buildingId;
+                group.className = 'btn-group btn-group-xs';
+                group.style.cssText = 'display:inline-flex;align-items:center;margin-left:8px;gap:3px';
+
+                const reset = document.createElement('button');
+                reset.type = 'button';
+                reset.className = 'btn btn-default btn-sm schooling-personnel-reset-button';
+                reset.title = 'Auswahl dieser Wache zurÃ¼cksetzen';
+                reset.textContent = 'â†¶';
+                reset.addEventListener('click', async event => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    try {
+                        await resetPersonnel(buildingId);
+                    } catch (error) {
+                        ctx.error('ZurÃ¼cksetzen fehlgeschlagen:', error);
+                        alert('ZurÃ¼cksetzen fehlgeschlagen: ' + error.message);
+                    }
+                });
+
+                const input = document.createElement('input');
+                input.type = 'number';
+                input.min = '1';
+                input.step = '1';
+                input.id = PREFIX_ID + 'count-' + buildingId;
+                input.placeholder = 'Anzahl';
+                input.title = 'GewÃ¼nschte Gesamtzahl von dieser Wache';
+                input.className = 'form-control input-sm';
+                input.style.cssText = 'width:76px;display:inline-block;float:none;height:30px;padding:3px 6px';
+                ['click', 'mousedown', 'keyup', 'keypress', 'keydown'].forEach(type =>
+                    input.addEventListener(type, event => event.stopPropagation())
+                );
+
+                const select = document.createElement('button');
+                select.type = 'button';
+                select.className = 'btn btn-default btn-sm schooling-personnel-select-button';
+                select.textContent = 'AuswÃ¤hlen';
+                select.addEventListener('click', async event => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    try {
+                        await selectPersonnel(buildingId, input.value);
+                    } catch (error) {
+                        ctx.error('Personalauswahl fehlgeschlagen:', error);
+                        alert('Personalauswahl fehlgeschlagen: ' + error.message);
+                    }
+                });
+
+                input.addEventListener('keydown', event => {
+                    if (event.key === 'Enter') {
+                        event.preventDefault();
+                        select.click();
+                    }
+                });
+
+                group.append(reset, input, select);
+                return group;
+            }
+
+            function build() {
+                if (document.getElementById(OPTIONS_ID)) {
+                    built = true;
+                    return true;
+                }
+
+                const headings = [...document.querySelectorAll(
+                    '.panel-heading.personal-select-heading[building_id]'
+                )];
+                if (!headings.length) return false;
+
+                headings.forEach(heading => {
+                    const buildingId = heading.getAttribute('building_id');
+                    if (!buildingId || document.getElementById(PREFIX_ID + buildingId)) return;
+                    const target = heading.querySelector(':scope > *') || heading;
+                    target.appendChild(createPersonnelSelector(buildingId));
+                });
+
+                const firstPanel = headings[0].closest('.panel');
+                if (firstPanel?.parentNode) {
+                    firstPanel.parentNode.insertBefore(createOptionsBox(), firstPanel);
+                } else {
+                    headings[0].parentNode.insertBefore(createOptionsBox(), headings[0]);
+                }
+
+                built = true;
+                ctx.log('OberflÃ¤che aufgebaut (' + headings.length + ' Wachen).');
+                return true;
+            }
+
+            if (!build()) {
+                let attempts = 0;
+                const timer = ctx.interval(() => {
+                    if (build() || ++attempts >= 30) {
+                        clearInterval(timer);
+                    }
+                }, 500);
+            }
+
+            // Falls die Spielseite die Wachenliste nachtrÃ¤glich ergÃ¤nzt.
+            const observer = new MutationObserver(() => {
+                if (!built) build();
+            });
+            observer.observe(document.body, { childList: true, subtree: true });
+
+            ctx.onCleanup(() => {
+                observer.disconnect();
+                document.querySelectorAll(
+                    '[id^="schooling-assigner-"], [id^="personnel-selection-counter-"]'
+                ).forEach(node => node.remove());
+                const options = document.getElementById(OPTIONS_ID);
+                if (options) options.remove();
+            });
         }
-      } else if (toggle) {
-        panelBody.classList.add("hidden");
-      }
-    }
-
-    function createPersonnelSelector(buildingId) {
-      let buttonGroup = document.createElement("div");
-      buttonGroup.id = "schooling-assigner-" + buildingId;
-      buttonGroup.className = "btn-group btn-group-xs";
-
-      let resetIcon = document.createElement("span");
-      resetIcon.className = "glyphicon glyphicon-trash";
-      resetIcon.dataset.buildingId = buildingId;
-
-      let resetButton = document.createElement("button");
-      resetButton.type = "button";
-      resetButton.className =
-        "btn btn-default btn-sm schooling-personnel-reset-button";
-      resetButton.appendChild(resetIcon);
-      resetButton.addEventListener("click", resetPersonnelClick);
-
-      buttonGroup.appendChild(resetButton);
-
-      // Zahlenfeld: gewünschte Gesamtzahl an Personen für diese Wache
-      let input = document.createElement("input");
-      input.type = "number";
-      input.min = "1";
-      input.id = "schooling-assigner-count-" + buildingId;
-      input.placeholder = "Anzahl";
-      input.title = "Gewünschte Anzahl Personen von dieser Wache";
-      input.className = "form-control input-sm";
-      input.style.cssText =
-        "width:70px;display:inline-block;float:none;vertical-align:middle;margin:0 4px;height:24px;padding:2px 5px";
-      // Klicks/Tasten im Feld dürfen das Auf-/Zuklappen der Wache nicht auslösen
-      ["click", "mousedown", "keyup", "keypress"].forEach((ev) =>
-        input.addEventListener(ev, (e) => e.stopPropagation())
-      );
-
-      let button = document.createElement("button");
-      button.type = "button";
-      button.className =
-        "btn btn-default btn-sm schooling-personnel-select-button";
-      button.dataset.buildingId = buildingId;
-      button.textContent = "Auswählen";
-      button.addEventListener("click", selectPersonnelClick);
-
-      // Enter im Feld wählt aus (und schickt nicht das Lehrgangs-Formular ab)
-      input.addEventListener("keydown", (e) => {
-        e.stopPropagation();
-        if (e.key === "Enter") {
-          e.preventDefault();
-          button.click();
-        }
-      });
-
-      buttonGroup.appendChild(input);
-      buttonGroup.appendChild(button);
-
-      return buttonGroup;
-    }
-
-    async function selectPersonnel(buildingId, wanted) {
-      const mode = getMode();
-      if (mode.extra && !mode.basis) {
-        alert("Bitte zuerst den Basislehrgang wählen (oder Zusatzausbildung abwählen).");
-        return;
-      }
-      wanted = parseInt(wanted, 10);
-      if (!(wanted > 0)) {
-        alert("Bitte eine Anzahl größer 0 eintragen.");
-        return;
-      }
-
-      await panelHeadingClick(buildingId);
-
-      const target = selectedTarget();
-      let schoolingFree = $("#schooling_free");
-      let free = parseInt(schoolingFree.html(), 10) || 0;
-
-      // Die Zahl gilt als Gesamtzahl für die Wache: bereits angehakte Personen zählen mit
-      const already = countSelectedPersonnel(buildingId);
-      let remaining = Math.max(0, wanted - already);
-      let eligible = 0; // passende, noch nicht ausgewählte Personen auf der Wache
-      let added = 0;
-
-      $(".schooling_checkbox[building_id='" + buildingId + "']").each(
-        function () {
-          if ($(this).prop("checked") || $(this).prop("disabled")) {
-            return;
-          }
-          // Personal, das auf einem Fahrzeug zugewiesen ist (Link in der Zeile), überspringen
-          if ($(this).parent().parent().find("a")[0] != null) {
-            return;
-          }
-
-          const parts = educationsOf(this);
-          if (parts === null) {
-            return; // Ausbildungs-Zelle nicht gefunden: sicherheitshalber nicht auswählen
-          }
-
-          let ok;
-          if (mode.extra) {
-            const hasBasis = parts.some((p) => matches(p, mode.basis));
-            const hasTarget =
-              target !== "" && parts.some((p) => matches(p, target));
-            ok = hasBasis && !hasTarget;
-          } else {
-            ok = parts.length === 0; // nur Personal ohne jede Ausbildung
-          }
-          if (!ok) {
-            return;
-          }
-
-          eligible++;
-          if (remaining > 0 && free > 0) {
-            $(this).prop("checked", true);
-            --free;
-            --remaining;
-            added++;
-          }
-        }
-      );
-
-      schoolingFree.html(free);
-      W.update_costs();
-
-      // Hinweis, falls weniger als gewünscht ausgewählt werden konnte
-      const total = already + added;
-      let note = "";
-      if (total < wanted) {
-        note =
-          eligible > added && free <= 0
-            ? "Lehrgang voll"
-            : "nur " + total + " verfügbar";
-      }
-      updateSelectionCounter(buildingId, note);
-    }
-
-    async function resetPersonnel(buildingId) {
-      await panelHeadingClick(buildingId);
-
-      let schoolingFree = $("#schooling_free");
-      let free = parseInt(schoolingFree.html(), 10) || 0;
-
-      $(".schooling_checkbox[building_id='" + buildingId + "']").each(
-        function () {
-          if ($(this).prop("checked")) {
-            $(this).prop("checked", false);
-            ++free;
-          }
-        }
-      );
-
-      schoolingFree.html(free);
-      W.update_costs();
-
-      updateSelectionCounter(buildingId);
-    }
-
-    function countSelectedPersonnel(buildingId) {
-      let count = 0;
-      let checkboxes = document.querySelectorAll(
-        ".schooling_checkbox[building_id='" + buildingId + "']"
-      );
-
-      for (let i = 0; i < checkboxes.length; i++) {
-        if (checkboxes[i].checked) {
-          count++;
-        }
-      }
-
-      return count;
-    }
-
-    function updateSelectionCounter(buildingId, note) {
-      const element_id = "personnel-selection-counter-" + buildingId;
-
-      let counter = document.createElement("span");
-      counter.id = element_id;
-      counter.className = note ? "label label-warning" : "label label-primary";
-      counter.textContent =
-        countSelectedPersonnel(buildingId) +
-        " ausgewählt" +
-        (note ? " – " + note : "");
-
-      const element = document.getElementById(element_id);
-
-      if (element) {
-        element.replaceWith(counter);
-      } else {
-        document
-          .getElementById("schooling-assigner-" + buildingId)
-          .parentNode.prepend(counter);
-      }
-    }
-
-    function getPanelHeading(buildingId) {
-      return document.querySelector(
-        ".personal-select-heading[building_id='" + buildingId + "']"
-      );
-    }
-
-    function getPanelBody(buildingId) {
-      return document.querySelector(
-        ".panel-body[building_id='" + buildingId + "']"
-      );
-    }
-  }
-
-  return {
-    id: "lehrgangszuweiser",
-    name: "Lehrgangszuweiser (Zusatzausbildung)",
-    matches,
-    init() {
-      if (!matches()) return;
-      if (!W.$ || !W.loadedBuildings) return; // keine Schulungsseite
-      if (document.getElementById("schooling-assigner-options")) return; // schon aktiv
-      run();
-    },
-  };
-})();
+    });
 
     // ======================================================================
-    // NEUES MODUL HINZUFÜGEN – Vorlage (einfach kopieren und ausfüllen):
+    // NEUES MODUL HINZUFÃœGEN â€“ Vorlage (einfach kopieren und ausfÃ¼llen):
     //
     // register({
     //     id: 'mein-modul',                      // eindeutig, keine Leerzeichen
@@ -3438,8 +3400,8 @@ const LehrgangszuweiserModule = (function () {
     //         ctx.addStyle('.foo { color: red; }');        // wird beim Ausschalten entfernt
     //         ctx.on(document, 'click', e => { ... });     // dito
     //         ctx.interval(() => { ... }, 1000);           // dito
-    //         ctx.onCleanup(() => { /* eigenes Aufräumen */ });
-    //         // ctx.get('key', default) / ctx.set('key', wert) für Einstellungen
+    //         ctx.onCleanup(() => { /* eigenes AufrÃ¤umen */ });
+    //         // ctx.get('key', default) / ctx.set('key', wert) fÃ¼r Einstellungen
     //     },
     // });
     // ======================================================================
@@ -3468,22 +3430,22 @@ const LehrgangszuweiserModule = (function () {
             a.href = CONFIG.updateUrl;
             a.target = '_blank';
             a.rel = 'noopener';
-            a.textContent = `⬆ Update auf v${remote} installieren`;
+            a.textContent = `â¬† Update auf v${remote} installieren`;
             a.style.color = '#f0ad4e';
-            el.append(`v${VERSION} · `, a);
+            el.append(`v${VERSION} Â· `, a);
         }
         updateRemote = remote;
         const ml = document.getElementById('lsstb-menu-link');
         if (ml) {
             ml.textContent = menuLabel();
-            ml.title = `Update v${remote} verfügbar`;
+            ml.title = `Update v${remote} verfÃ¼gbar`;
         }
     }
 
     async function checkForUpdate() {
         if (!CONFIG.updateUrl) return;
         let info = store.get('update', null);                  // { t, remote }
-        if (!info || Date.now() - info.t > 3 * 36e5) {         // höchstens alle 3 h nachsehen
+        if (!info || Date.now() - info.t > 3 * 36e5) {         // hÃ¶chstens alle 3 h nachsehen
             try {
                 const r = await fetch(CONFIG.updateUrl, { cache: 'no-store' });
                 if (!r.ok) throw new Error('HTTP ' + r.status);
@@ -3492,7 +3454,7 @@ const LehrgangszuweiserModule = (function () {
                 info = { t: Date.now(), remote: m ? m[1] : null };
                 store.set('update', info);
             } catch (e) {
-                console.warn('[LSS-Toolbox] Update-Prüfung fehlgeschlagen:', e);
+                console.warn('[LSS-Toolbox] Update-PrÃ¼fung fehlgeschlagen:', e);
                 return;
             }
         }
@@ -3505,6 +3467,6 @@ const LehrgangszuweiserModule = (function () {
         checkForUpdate();
     }
 
-    // Für Debugging in der Konsole erreichbar
+    // FÃ¼r Debugging in der Konsole erreichbar
     window.LSSToolbox = { modules, running, store, startModule, stopModule, open: () => panelApi.open && panelApi.open() };
 })();
