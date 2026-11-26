@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         LSS Toolbox
 // @namespace    lss-toolbox
-// @version      2.3.0
-// @description  Bündelt mehrere Leitstellenspiel-Helfer als einzeln schaltbare Module (Fahrzeug-Abgleich, Ausbildungscheck, Personal-Übersicht, MissionShare, Maasenausbau)
+// @version      2.3.1
+// @description  Bündelt mehrere Leitstellenspiel-Helfer als einzeln schaltbare Module (Fahrzeug-Abgleich, Ausbildungscheck, Personal-Übersicht, MissionShare, Maasenausbau, Lehrgangszuweiser)
 // @match        https://www.leitstellenspiel.de/*
 // @run-at       document-idle
 // @updateURL    https://raw.githubusercontent.com/christiand1975/scripts/main/lss-toolbox.user.js
@@ -16,7 +16,7 @@
     // ======================================================================
     // KONFIGURATION – hier deine Werte eintragen
     // ======================================================================
-    const VERSION = '2.3.0';      // muss zur @version im Header passen
+    const VERSION = '2.3.1';      // muss zur @version im Header passen
     const CONFIG = {
         // Adresse der veröffentlichten .user.js, z. B.
         // 'https://raw.githubusercontent.com/DEINNAME/lss-toolbox/main/lss-toolbox.user.js'
@@ -2974,7 +2974,455 @@
     }
         },
     });
+  /*
+ * LSS-Toolbox-Modul: Lehrgangszuweiser (Zusatzausbildung)
+ * Basis: "Lehrgangszuweiser" von BOS-Ernie, angepasst (v0.6.0)
+ *
+ * Funktionen:
+ *  - Zahlenfeld + Button "Auswählen" pro Wache (beliebig viele Personen, höchstens so viele wie verfügbar)
+ *  - Abfrage "Zusatzausbildung": nein = nur Personal ohne Ausbildung, ja = nur Personal mit gewähltem Basislehrgang
+ *  - setzt nur Häkchen in der Lehrgangs-Auswahl; der Lehrgang wird weiterhin von dir mit dem normalen Button gestartet
+ *
+ * Läuft nur auf /buildings/* und /schoolings/* (Schulungsseiten). Seiten-Funktionen (jQuery, update_costs, ...)
+ * werden über unsafeWindow angesprochen, falls die Toolbox eine Sandbox (@grant) nutzt.
+ *
+ * Aufruf aus der Toolbox:  LehrgangszuweiserModule.init();
+ */
+const LehrgangszuweiserModule = (function () {
+  "use strict";
 
+  const W = typeof unsafeWindow !== "undefined" ? unsafeWindow : window;
+
+  function matches() {
+    return /^\/(buildings|schoolings)\//.test(location.pathname);
+  }
+
+  function run() {
+    const $ = W.$;
+
+    // ---------------------------------------------------------------------
+    // Hilfsfunktionen für die Ausbildungs-Prüfung
+    // ---------------------------------------------------------------------
+    const norm = (s) => String(s || "").replace(/\s+/g, " ").trim().toLowerCase();
+
+    // Name aus dem Label eines Lehrgangs-Radiobuttons (Dauer/Kosten abschneiden)
+    const cleanName = (s) =>
+      String(s || "")
+        .replace(/\s+/g, " ")
+        .trim()
+        .split(/\s*[\(\[]|\s+\d/)[0]
+        .trim();
+
+    // Passt ein Eintrag der Ausbildungs-Spalte zu einem Lehrgangsnamen?
+    function matches(part, name) {
+      const p = norm(part);
+      const n = norm(name);
+      if (!p || !n) return false;
+      if (p === n) return true;
+      if (n.length >= 4 && p.includes(n)) return true;
+      if (p.length >= 4 && n.includes(p)) return true;
+      return false;
+    }
+
+    // Ausbildungen einer Person (aus der Spalte "Ausbildung"), null = Zelle nicht gefunden
+    function educationsOf(checkbox) {
+      const cell = document.getElementById(
+        "school_personal_education_" + $(checkbox).val()
+      );
+      if (!cell) return null;
+      return cell.textContent
+        .split(/[,;\n]+/)
+        .map((x) => x.replace(/\s+/g, " ").trim())
+        .filter(Boolean);
+    }
+
+    // Lehrgänge der aktuellen Schule (Radiobuttons der Lehrgangsauswahl)
+    function schoolEducations() {
+      const seen = new Set();
+      const out = [];
+      document.querySelectorAll("input[name=education]").forEach((r) => {
+        const el = r.closest("label") || r.parentElement;
+        const t = cleanName(el ? el.textContent : "");
+        if (t && !seen.has(t)) {
+          seen.add(t);
+          out.push(t);
+        }
+      });
+      return out;
+    }
+
+    // Der aktuell gewählte (Ziel-)Lehrgang
+    function selectedTarget() {
+      const r = document.querySelector("input[name=education]:checked");
+      if (!r) return "";
+      const el = r.closest("label") || r.parentElement;
+      return cleanName(el ? el.textContent : "");
+    }
+
+    // ---------------------------------------------------------------------
+    // Einstellungsbox: Zusatzausbildung ja/nein + Basislehrgang
+    // ---------------------------------------------------------------------
+    function createOptionsBox() {
+      const box = document.createElement("div");
+      box.id = "schooling-assigner-options";
+      box.className = "well well-sm";
+      box.innerHTML =
+        '<label style="font-weight:bold;margin:0">' +
+        '<input type="checkbox" id="sa-extra"> Zusatzausbildung ' +
+        "(nur Personal mit Basislehrgang auswählen)</label>" +
+        '<div id="sa-basis-wrap" style="display:none;margin-top:6px">' +
+        'Basislehrgang: <input type="text" id="sa-basis" list="sa-basis-list" ' +
+        'class="form-control input-sm" style="display:inline-block;width:320px" ' +
+        'placeholder="aus der Schule wählen oder eintippen">' +
+        '<datalist id="sa-basis-list"></datalist></div>' +
+        '<div class="text-muted" id="sa-hint" style="margin-top:4px"></div>';
+
+      const extra = box.querySelector("#sa-extra");
+      const wrap = box.querySelector("#sa-basis-wrap");
+      const basis = box.querySelector("#sa-basis");
+
+      const refresh = () => {
+        wrap.style.display = extra.checked ? "" : "none";
+        box.querySelector("#sa-hint").textContent = extra.checked
+          ? "Es wird nur Personal ausgewählt, das den Basislehrgang hat und den gewählten Lehrgang noch nicht besitzt."
+          : "Es wird nur Personal ohne jede Ausbildung ausgewählt.";
+        fillList();
+      };
+      const fillList = () => {
+        const dl = box.querySelector("#sa-basis-list");
+        dl.innerHTML = "";
+        schoolEducations().forEach((name) => {
+          const o = document.createElement("option");
+          o.value = name;
+          dl.appendChild(o);
+        });
+      };
+
+      extra.addEventListener("change", refresh);
+      basis.addEventListener("focus", fillList);
+      refresh();
+      return box;
+    }
+
+    function getMode() {
+      const extra = document.getElementById("sa-extra");
+      const basis = document.getElementById("sa-basis");
+      return {
+        extra: !!(extra && extra.checked),
+        basis: basis ? basis.value.trim() : "",
+      };
+    }
+
+    // ---------------------------------------------------------------------
+    // Aufbau der Oberfläche
+    // ---------------------------------------------------------------------
+    let elements = document.getElementsByClassName(
+      "panel-heading personal-select-heading"
+    );
+    for (let i = 0; i < elements.length; i++) {
+      let buildingId = elements[i].getAttribute("building_id");
+      elements[i].children[0].appendChild(createPersonnelSelector(buildingId));
+    }
+
+    if (elements.length) {
+      const panel = elements[0].closest(".panel");
+      if (panel && panel.parentNode) {
+        panel.parentNode.insertBefore(createOptionsBox(), panel);
+      }
+    }
+
+    $(".personal-select-heading")
+      .unbind("click")
+      .bind("click", panelHeadingClickEvent);
+
+    async function selectPersonnelClick(event) {
+      const buildingId = event.currentTarget.dataset.buildingId;
+      const input = document.getElementById(
+        "schooling-assigner-count-" + buildingId
+      );
+      await selectPersonnel(buildingId, input ? input.value : "");
+      event.preventDefault();
+    }
+
+    async function resetPersonnelClick(event) {
+      await resetPersonnel(event.target.dataset.buildingId);
+      event.preventDefault();
+    }
+
+    async function panelHeadingClickEvent(event) {
+      // Skip redundant panelHeadingClick call which is handled by button click event
+      if (
+        event.target.classList.contains("schooling-personnel-select-button") ||
+        event.target.parentNode.classList.contains(
+          "schooling-personnel-reset-button"
+        )
+      ) {
+        return;
+      }
+
+      let buildingIdElement = event.target.outerHTML.match(/building_id="(\d+)"/);
+      if (buildingIdElement === null) {
+        buildingIdElement =
+          event.target.parentElement.parentElement.parentElement.parentElement.outerHTML.match(
+            /building_id="(\d+)"/
+          );
+      }
+
+      await panelHeadingClick(buildingIdElement[1], true);
+    }
+
+    async function panelHeadingClick(buildingId, toggle = false) {
+      const panelHeading = getPanelHeading(buildingId);
+      const panelBody = getPanelBody(buildingId);
+
+      const href = panelHeading.outerHTML.match(/href="([^"]+)"/)[1];
+
+      if (panelBody.classList.contains("hidden")) {
+        if (toggle) {
+          panelBody.classList.remove("hidden");
+        }
+
+        if (W.loadedBuildings.indexOf(href) === -1) {
+          W.loadedBuildings.push(href);
+          await $.get(href, function (data) {
+            panelBody.innerHTML = data;
+
+            const education_key = $("input[name=education]:checked").attr(
+              "education_key"
+            );
+
+            if (
+              typeof education_key == "undefined" &&
+              typeof W.globalEducationKey != "undefined"
+            ) {
+              W.schooling_disable(W.globalEducationKey);
+            } else if (typeof education_key != "undefined") {
+              W.schooling_disable(education_key);
+              W.update_schooling_free();
+            }
+          });
+        }
+      } else if (toggle) {
+        panelBody.classList.add("hidden");
+      }
+    }
+
+    function createPersonnelSelector(buildingId) {
+      let buttonGroup = document.createElement("div");
+      buttonGroup.id = "schooling-assigner-" + buildingId;
+      buttonGroup.className = "btn-group btn-group-xs";
+
+      let resetIcon = document.createElement("span");
+      resetIcon.className = "glyphicon glyphicon-trash";
+      resetIcon.dataset.buildingId = buildingId;
+
+      let resetButton = document.createElement("button");
+      resetButton.type = "button";
+      resetButton.className =
+        "btn btn-default btn-sm schooling-personnel-reset-button";
+      resetButton.appendChild(resetIcon);
+      resetButton.addEventListener("click", resetPersonnelClick);
+
+      buttonGroup.appendChild(resetButton);
+
+      // Zahlenfeld: gewünschte Gesamtzahl an Personen für diese Wache
+      let input = document.createElement("input");
+      input.type = "number";
+      input.min = "1";
+      input.id = "schooling-assigner-count-" + buildingId;
+      input.placeholder = "Anzahl";
+      input.title = "Gewünschte Anzahl Personen von dieser Wache";
+      input.className = "form-control input-sm";
+      input.style.cssText =
+        "width:70px;display:inline-block;float:none;vertical-align:middle;margin:0 4px;height:24px;padding:2px 5px";
+      // Klicks/Tasten im Feld dürfen das Auf-/Zuklappen der Wache nicht auslösen
+      ["click", "mousedown", "keyup", "keypress"].forEach((ev) =>
+        input.addEventListener(ev, (e) => e.stopPropagation())
+      );
+
+      let button = document.createElement("button");
+      button.type = "button";
+      button.className =
+        "btn btn-default btn-sm schooling-personnel-select-button";
+      button.dataset.buildingId = buildingId;
+      button.textContent = "Auswählen";
+      button.addEventListener("click", selectPersonnelClick);
+
+      // Enter im Feld wählt aus (und schickt nicht das Lehrgangs-Formular ab)
+      input.addEventListener("keydown", (e) => {
+        e.stopPropagation();
+        if (e.key === "Enter") {
+          e.preventDefault();
+          button.click();
+        }
+      });
+
+      buttonGroup.appendChild(input);
+      buttonGroup.appendChild(button);
+
+      return buttonGroup;
+    }
+
+    async function selectPersonnel(buildingId, wanted) {
+      const mode = getMode();
+      if (mode.extra && !mode.basis) {
+        alert("Bitte zuerst den Basislehrgang wählen (oder Zusatzausbildung abwählen).");
+        return;
+      }
+      wanted = parseInt(wanted, 10);
+      if (!(wanted > 0)) {
+        alert("Bitte eine Anzahl größer 0 eintragen.");
+        return;
+      }
+
+      await panelHeadingClick(buildingId);
+
+      const target = selectedTarget();
+      let schoolingFree = $("#schooling_free");
+      let free = parseInt(schoolingFree.html(), 10) || 0;
+
+      // Die Zahl gilt als Gesamtzahl für die Wache: bereits angehakte Personen zählen mit
+      const already = countSelectedPersonnel(buildingId);
+      let remaining = Math.max(0, wanted - already);
+      let eligible = 0; // passende, noch nicht ausgewählte Personen auf der Wache
+      let added = 0;
+
+      $(".schooling_checkbox[building_id='" + buildingId + "']").each(
+        function () {
+          if ($(this).prop("checked") || $(this).prop("disabled")) {
+            return;
+          }
+          // Personal, das auf einem Fahrzeug zugewiesen ist (Link in der Zeile), überspringen
+          if ($(this).parent().parent().find("a")[0] != null) {
+            return;
+          }
+
+          const parts = educationsOf(this);
+          if (parts === null) {
+            return; // Ausbildungs-Zelle nicht gefunden: sicherheitshalber nicht auswählen
+          }
+
+          let ok;
+          if (mode.extra) {
+            const hasBasis = parts.some((p) => matches(p, mode.basis));
+            const hasTarget =
+              target !== "" && parts.some((p) => matches(p, target));
+            ok = hasBasis && !hasTarget;
+          } else {
+            ok = parts.length === 0; // nur Personal ohne jede Ausbildung
+          }
+          if (!ok) {
+            return;
+          }
+
+          eligible++;
+          if (remaining > 0 && free > 0) {
+            $(this).prop("checked", true);
+            --free;
+            --remaining;
+            added++;
+          }
+        }
+      );
+
+      schoolingFree.html(free);
+      W.update_costs();
+
+      // Hinweis, falls weniger als gewünscht ausgewählt werden konnte
+      const total = already + added;
+      let note = "";
+      if (total < wanted) {
+        note =
+          eligible > added && free <= 0
+            ? "Lehrgang voll"
+            : "nur " + total + " verfügbar";
+      }
+      updateSelectionCounter(buildingId, note);
+    }
+
+    async function resetPersonnel(buildingId) {
+      await panelHeadingClick(buildingId);
+
+      let schoolingFree = $("#schooling_free");
+      let free = parseInt(schoolingFree.html(), 10) || 0;
+
+      $(".schooling_checkbox[building_id='" + buildingId + "']").each(
+        function () {
+          if ($(this).prop("checked")) {
+            $(this).prop("checked", false);
+            ++free;
+          }
+        }
+      );
+
+      schoolingFree.html(free);
+      W.update_costs();
+
+      updateSelectionCounter(buildingId);
+    }
+
+    function countSelectedPersonnel(buildingId) {
+      let count = 0;
+      let checkboxes = document.querySelectorAll(
+        ".schooling_checkbox[building_id='" + buildingId + "']"
+      );
+
+      for (let i = 0; i < checkboxes.length; i++) {
+        if (checkboxes[i].checked) {
+          count++;
+        }
+      }
+
+      return count;
+    }
+
+    function updateSelectionCounter(buildingId, note) {
+      const element_id = "personnel-selection-counter-" + buildingId;
+
+      let counter = document.createElement("span");
+      counter.id = element_id;
+      counter.className = note ? "label label-warning" : "label label-primary";
+      counter.textContent =
+        countSelectedPersonnel(buildingId) +
+        " ausgewählt" +
+        (note ? " – " + note : "");
+
+      const element = document.getElementById(element_id);
+
+      if (element) {
+        element.replaceWith(counter);
+      } else {
+        document
+          .getElementById("schooling-assigner-" + buildingId)
+          .parentNode.prepend(counter);
+      }
+    }
+
+    function getPanelHeading(buildingId) {
+      return document.querySelector(
+        ".personal-select-heading[building_id='" + buildingId + "']"
+      );
+    }
+
+    function getPanelBody(buildingId) {
+      return document.querySelector(
+        ".panel-body[building_id='" + buildingId + "']"
+      );
+    }
+  }
+
+  return {
+    id: "lehrgangszuweiser",
+    name: "Lehrgangszuweiser (Zusatzausbildung)",
+    matches,
+    init() {
+      if (!matches()) return;
+      if (!W.$ || !W.loadedBuildings) return; // keine Schulungsseite
+      if (document.getElementById("schooling-assigner-options")) return; // schon aktiv
+      run();
+    },
+  };
+})();
 
     // ======================================================================
     // NEUES MODUL HINZUFÜGEN – Vorlage (einfach kopieren und ausfüllen):
